@@ -1,6 +1,7 @@
 """
 Audio file upload endpoints
 """
+import logging
 from fastapi import APIRouter, Depends, HTTPException, status, File, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -14,15 +15,17 @@ from app.db.session import get_db
 from app.models.session import Session, AudioFile, SessionStatus
 from app.core.config import settings
 from app.services.s3_service import get_s3_service
+from app.api.dependencies import get_current_user_id
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 @router.post("/{session_id}/upload", status_code=status.HTTP_201_CREATED)
 async def upload_audio_file(
     session_id: int,
     audio_file: UploadFile = File(...),
-    user_id: int = 1,  # TODO: Get from JWT token
+    user_id: int = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -56,14 +59,23 @@ async def upload_audio_file(
         )
 
     # Check if audio file already exists
-    existing_audio = await db.execute(
+    existing_audio_result = await db.execute(
         select(AudioFile).where(AudioFile.session_id == session_id)
     )
-    if existing_audio.scalar_one_or_none():
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Audio file already uploaded for this session",
-        )
+    existing_audio = existing_audio_result.scalar_one_or_none()
+    
+    if existing_audio:
+        # Return existing audio file info instead of throwing error
+        return {
+            "id": existing_audio.id,
+            "session_id": session_id,
+            "filename": existing_audio.filename,
+            "file_size": existing_audio.file_size,
+            "mime_type": existing_audio.mime_type,
+            "storage_type": existing_audio.storage_type,
+            "file_path": existing_audio.file_path if existing_audio.storage_type == "s3" else None,
+            "message": "Audio file already exists for this session. Using existing file.",
+        }
 
     # Generate unique filename
     file_extension = Path(audio_file.filename or "recording.webm").suffix
@@ -98,7 +110,7 @@ async def upload_audio_file(
                 file_path = s3_url  # Store S3 URL as file_path
             except Exception as e:
                 # Fall back to local storage if S3 fails
-                print(f"S3 upload failed, falling back to local: {e}")
+                logger.warning(f"S3 upload failed for session {session_id}, falling back to local storage", exc_info=True)
                 local_dir = Path("uploads")
                 local_dir.mkdir(exist_ok=True)
                 local_path = local_dir / unique_filename
@@ -143,6 +155,9 @@ async def upload_audio_file(
     await db.commit()
     await db.refresh(audio_file_record)
 
+    logger.info(f"Audio file uploaded successfully for session {session_id}: {unique_filename}")
+    logger.info(f"Session {session_id} status updated to PROCESSING")
+
     return {
         "id": audio_file_record.id,
         "session_id": session_id,
@@ -151,14 +166,14 @@ async def upload_audio_file(
         "mime_type": audio_file.content_type,
         "storage_type": storage_type,
         "file_path": file_path if storage_type == "s3" else None,  # Only expose S3 URLs
-        "message": f"Audio file uploaded successfully to {storage_type}. Processing will begin shortly.",
+        "message": f"Audio file uploaded successfully to {storage_type}. Transcription and AI analysis in progress.",
     }
 
 
 @router.get("/{session_id}/audio")
 async def get_audio_file_info(
     session_id: int,
-    user_id: int = 1,  # TODO: Get from JWT token
+    user_id: int = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db),
 ):
     """

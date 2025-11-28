@@ -4,26 +4,27 @@ Handles checklist item responses (Yes/No/Partial) for each session
 """
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, delete
 from sqlalchemy.orm import selectinload
 from typing import List
 
 from app.db.session import get_db
-from app.models import Session, SessionResponse, ChecklistItem
+from app.models.session import Session, SessionResponse
+from app.models.checklist import ChecklistItem
 from app.models.session import SessionStatus
+from app.api.dependencies import get_current_user_id
 from app.schemas.response import (
+    SessionResponseOut,
     SessionResponseCreate,
     SessionResponseUpdate,
-    SessionResponseOut,
     BulkResponseCreate,
-    SessionResponseListOut,
+    SessionResponseListOut
 )
-from app.api.dependencies import get_current_user_id
 
 router = APIRouter()
 
 
-@router.get("/{session_id}/responses", response_model=SessionResponseListOut)
+@router.get("/{session_id}/responses")
 async def get_session_responses(
     session_id: int,
     user_id: int = Depends(get_current_user_id),
@@ -56,11 +57,29 @@ async def get_session_responses(
     )
     responses = result.scalars().all()
 
-    return SessionResponseListOut(
-        session_id=session_id,
-        total_items=len(responses),
-        responses=[SessionResponseOut.model_validate(r) for r in responses]
-    )
+    return {
+        "session_id": session_id,
+        "total_items": len(responses),
+        "responses": [
+            {
+                "id": r.id,
+                "item_id": r.item_id,
+                "is_validated": r.is_validated,
+                "confidence": r.confidence,
+                "evidence_text": r.evidence_text,
+                "manual_override": r.manual_override,
+                "item": {
+                    "id": r.item.id,
+                    "title": r.item.title,
+                    "definition": r.item.definition,
+                    "category": {
+                        "id": r.item.category.id,
+                        "name": r.item.category.name
+                    }
+                }
+            } for r in responses
+        ]
+    }
 
 
 @router.post("/{session_id}/responses", response_model=SessionResponseOut, status_code=status.HTTP_201_CREATED)
@@ -154,8 +173,9 @@ async def bulk_create_responses(
 
     # Delete existing responses (if any)
     await db.execute(
-        select(SessionResponse).where(SessionResponse.session_id == session_id)
+        delete(SessionResponse).where(SessionResponse.session_id == session_id)
     )
+    await db.commit()
 
     # Create all responses
     created_responses = []
@@ -316,8 +336,9 @@ async def initialize_session_responses(
 
     # Delete existing responses
     await db.execute(
-        select(SessionResponse).where(SessionResponse.session_id == session_id)
+        delete(SessionResponse).where(SessionResponse.session_id == session_id)
     )
+    await db.commit()
 
     # Create empty responses for all items
     created_responses = []

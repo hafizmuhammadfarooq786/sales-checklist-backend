@@ -15,6 +15,7 @@ class SessionStatus(str, enum.Enum):
     PROCESSING = "processing"  # Transcribing audio
     ANALYZING = "analyzing"  # AI mapping to checklist
     SCORING = "scoring"  # Calculating scores
+    PENDING_REVIEW = "pending_review"  # Ready for user review
     COMPLETED = "completed"  # All done
     FAILED = "failed"  # Error occurred
 
@@ -106,7 +107,8 @@ class Transcript(Base, TimestampMixin):
 
 class SessionResponse(Base, TimestampMixin):
     """
-    AI-generated response for each checklist item in a session
+    AI-generated Yes/No response for each checklist item in a session
+    Simple Yes/No scoring: Yes = 10 points, No = 0 points
     """
     __tablename__ = "session_responses"
 
@@ -114,16 +116,17 @@ class SessionResponse(Base, TimestampMixin):
     session_id = Column(Integer, ForeignKey("sessions.id", ondelete="CASCADE"), nullable=False)
     item_id = Column(Integer, ForeignKey("checklist_items.id", ondelete="CASCADE"), nullable=False)
 
-    # AI Response
-    is_validated = Column(Boolean, nullable=True)  # True/False/None (not found)
-    confidence = Column(Float, nullable=True)  # 0.0 - 1.0
-    evidence_text = Column(Text, nullable=True)  # Quote from transcript
-    ai_reasoning = Column(Text, nullable=True)  # Why AI made this decision
+    # AI Response - Simple Yes/No
+    ai_answer = Column(Boolean, nullable=False)  # True = Yes (10 pts), False = No (0 pts)
+    ai_reasoning = Column(Text, nullable=True)  # Why AI made this decision (for transparency)
 
-    # Manual override by admin/manager
-    manual_override = Column(Boolean, nullable=True)
-    override_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
-    override_reason = Column(Text, nullable=True)
+    # Manual override by user (rep can change before submitting)
+    user_answer = Column(Boolean, nullable=True)  # User's override answer
+    was_changed = Column(Boolean, default=False)  # Track if user changed AI answer
+    changed_at = Column(DateTime, nullable=True)  # When user made the change
+
+    # Score (calculated from final answer)
+    score = Column(Integer, default=0, nullable=False)  # 0 or 10
 
     # Relationships
     session = relationship("Session", back_populates="responses")

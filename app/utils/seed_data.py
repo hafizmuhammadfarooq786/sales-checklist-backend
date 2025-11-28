@@ -146,7 +146,7 @@ async def seed_categories(db: AsyncSession) -> dict[str, ChecklistCategory]:
 
 
 async def seed_default_organization(db: AsyncSession) -> Organization:
-    """Create default organization for demo"""
+    """Create default organization"""
     print("\\n🌱 Seeding default organization...")
 
     result = await db.execute(
@@ -285,7 +285,7 @@ async def main():
             print("=" * 60)
             print("\\n📊 Summary:")
             print(f"  • 10 Checklist Categories created")
-            print(f"  • 1 Organization created (demo)")
+            print(f"  • 1 Organization created")
             print(f"  • 4 System settings configured")
             print(f"  • Sample items created")
             print("\\n⚠️  TODO: Parse 10 Excel files to import all 92 checklist items")

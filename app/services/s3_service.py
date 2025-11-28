@@ -31,6 +31,7 @@ class S3Service:
         file_path: str,
         s3_key: str,
         content_type: Optional[str] = None,
+        bucket_name: Optional[str] = None,
     ) -> str:
         """
         Upload a file to S3
@@ -39,6 +40,7 @@ class S3Service:
             file_path: Local path to the file to upload
             s3_key: S3 object key (path in bucket)
             content_type: MIME type of the file
+            bucket_name: Optional bucket name (uses default if not provided)
 
         Returns:
             S3 URL of the uploaded file
@@ -51,16 +53,19 @@ class S3Service:
             if content_type:
                 extra_args["ContentType"] = content_type
 
+            # Use provided bucket or default
+            target_bucket = bucket_name or self.bucket_name
+
             # Upload file
             self.s3_client.upload_file(
                 file_path,
-                self.bucket_name,
+                target_bucket,
                 s3_key,
                 ExtraArgs=extra_args,
             )
 
             # Generate S3 URL
-            s3_url = f"https://{self.bucket_name}.s3.{settings.AWS_REGION}.amazonaws.com/{s3_key}"
+            s3_url = f"https://{target_bucket}.s3.{settings.AWS_REGION}.amazonaws.com/{s3_key}"
 
             logger.info(f"Successfully uploaded file to S3: {s3_url}")
             return s3_url

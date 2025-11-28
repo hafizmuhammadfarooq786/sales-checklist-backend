@@ -1,6 +1,7 @@
 """
 Session API endpoints
 """
+import logging
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
@@ -18,6 +19,7 @@ from app.schemas.session import (
 from app.api.dependencies import get_current_user_id
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 @router.post("/", response_model=SessionResponse, status_code=status.HTTP_201_CREATED)
@@ -54,6 +56,11 @@ async def create_session(
     db.add(session)
     await db.commit()
     await db.refresh(session)
+
+    # Note: SessionResponse records will be created automatically after transcription
+    # The AI will analyze the transcript and fill in all 10 checklist items with Yes/No answers
+    logger.info(f"Created session {session.id} for customer '{session.customer_name}'")
+    logger.info(f"Next steps: Upload audio → Transcribe → AI auto-fills checklist → User reviews")
 
     return SessionResponse.model_validate(session)
 
@@ -192,3 +199,285 @@ async def delete_session(
     await db.commit()
 
     return None
+
+
+# ============================================================================
+# NEW CHECKLIST REVIEW ENDPOINTS (10-item AI auto-fill system)
+# ============================================================================
+
+from app.schemas.checklist import (
+    ChecklistReviewResponse,
+    SessionResponseReview,
+    ChecklistItemInfo,
+    CoachingQuestionInfo,
+    ChecklistItemUpdate,
+    ChecklistItemUpdateResponse,
+    ChecklistSubmitResponse,
+)
+from app.models.checklist import ChecklistItem, ChecklistCategory, CoachingQuestion
+from app.models.session import SessionResponse as SessionResponseModel
+from datetime import datetime
+
+
+@router.get("/{session_id}/checklist", response_model=ChecklistReviewResponse)
+async def get_checklist_for_review(
+    session_id: int,
+    user_id: int = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get AI-filled checklist for user review.
+
+    Returns all 10 checklist items with:
+    - AI answers (Yes/No with reasoning)
+    - User overrides (if any)
+    - Coaching questions for each item
+    - Current score (0-100)
+
+    This is the page where user reviews AI answers and can manually change them.
+    """
+    # Verify session belongs to user
+    session_result = await db.execute(
+        select(Session).where(
+            Session.id == session_id,
+            Session.user_id == user_id
+        )
+    )
+    session = session_result.scalar_one_or_none()
+
+    if not session:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Session not found"
+        )
+
+    # Get all session responses with items and coaching questions
+    from sqlalchemy.orm import selectinload
+
+    responses_result = await db.execute(
+        select(SessionResponseModel)
+        .where(SessionResponseModel.session_id == session_id)
+        .options(
+            selectinload(SessionResponseModel.item).selectinload(ChecklistItem.category),
+            selectinload(SessionResponseModel.item).selectinload(ChecklistItem.coaching_questions)
+        )
+        .order_by(SessionResponseModel.item_id)
+    )
+    responses = responses_result.scalars().all()
+
+    if not responses:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Checklist not yet generated. Please transcribe the audio first."
+        )
+
+    # Build response items
+    items_list = []
+    total_score = 0
+    items_yes = 0
+    items_no = 0
+
+    for response in responses:
+        # Determine current answer (user override takes precedence)
+        current_answer = response.user_answer if response.user_answer is not None else response.ai_answer
+
+        if current_answer:
+            items_yes += 1
+            total_score += 10
+        else:
+            items_no += 1
+
+        # Build item info
+        item_info = ChecklistItemInfo(
+            id=response.item.id,
+            title=response.item.title,
+            definition=response.item.definition,
+            key_behavior=response.item.key_behavior,
+            order=response.item.order
+        )
+
+        # Build coaching questions
+        coaching_questions_list = [
+            CoachingQuestionInfo(
+                id=q.id,
+                section=q.section,
+                question=q.question,
+                order=q.order
+            )
+            for q in response.item.coaching_questions if q.is_active
+        ]
+
+        # Build session response review
+        session_response_review = SessionResponseReview(
+            item=item_info,
+            ai_answer=response.ai_answer,
+            ai_reasoning=response.ai_reasoning or "No reasoning provided",
+            user_answer=response.user_answer,
+            was_changed=response.was_changed,
+            score=response.score,
+            coaching_questions=coaching_questions_list
+        )
+
+        items_list.append(session_response_review)
+
+    return ChecklistReviewResponse(
+        session_id=session_id,
+        customer_name=session.customer_name,
+        opportunity_name=session.opportunity_name,
+        items=items_list,
+        total_score=total_score,
+        items_yes=items_yes,
+        items_no=items_no,
+        status=session.status.value
+    )
+
+
+@router.put(
+    "/{session_id}/checklist/{item_id}",
+    response_model=ChecklistItemUpdateResponse
+)
+async def update_checklist_item(
+    session_id: int,
+    item_id: int,
+    update_data: ChecklistItemUpdate,
+    user_id: int = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Update a single checklist item (manual override).
+
+    Allows the user to change the AI's answer before submitting.
+    Updates the user_answer, was_changed flag, and recalculates score.
+    """
+    # Verify session belongs to user
+    session_result = await db.execute(
+        select(Session).where(
+            Session.id == session_id,
+            Session.user_id == user_id
+        )
+    )
+    session = session_result.scalar_one_or_none()
+
+    if not session:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Session not found"
+        )
+
+    # Get the session response
+    response_result = await db.execute(
+        select(SessionResponseModel).where(
+            SessionResponseModel.session_id == session_id,
+            SessionResponseModel.item_id == item_id
+        )
+    )
+    response = response_result.scalar_one_or_none()
+
+    if not response:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Checklist item not found"
+        )
+
+    # Update user answer
+    response.user_answer = update_data.user_answer
+    response.was_changed = (response.user_answer != response.ai_answer)
+    response.changed_at = datetime.utcnow() if response.was_changed else None
+
+    # Recalculate score based on final answer
+    final_answer = response.user_answer if response.user_answer is not None else response.ai_answer
+    response.score = 10 if final_answer else 0
+
+    await db.commit()
+    await db.refresh(response)
+
+    logger.info(f"Item {item_id} updated: AI={response.ai_answer}, User={response.user_answer}, Score={response.score}")
+
+    return ChecklistItemUpdateResponse(
+        item_id=item_id,
+        ai_answer=response.ai_answer,
+        user_answer=response.user_answer,
+        was_changed=response.was_changed,
+        score=response.score,
+        message="Checklist item updated successfully"
+    )
+
+
+@router.post("/{session_id}/checklist/submit", response_model=ChecklistSubmitResponse)
+async def submit_checklist(
+    session_id: int,
+    user_id: int = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Submit finalized checklist to coach for review.
+
+    This endpoint:
+    1. Calculates final total score
+    2. Updates session status to 'submitted'
+    3. Records submitted_at timestamp
+    4. (Future) Creates CustomerChecklist record for tracking over time
+
+    After submission, the coach can review the results.
+    """
+    # Verify session belongs to user
+    session_result = await db.execute(
+        select(Session).where(
+            Session.id == session_id,
+            Session.user_id == user_id
+        )
+    )
+    session = session_result.scalar_one_or_none()
+
+    if not session:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Session not found"
+        )
+
+    # Get all session responses
+    responses_result = await db.execute(
+        select(SessionResponseModel).where(
+            SessionResponseModel.session_id == session_id
+        )
+    )
+    responses = responses_result.scalars().all()
+
+    if not responses:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No checklist responses found. Please transcribe the audio first."
+        )
+
+    # Calculate final scores
+    total_score = 0
+    items_yes = 0
+    items_no = 0
+
+    for response in responses:
+        # Use user answer if provided, otherwise AI answer
+        final_answer = response.user_answer if response.user_answer is not None else response.ai_answer
+
+        if final_answer:
+            items_yes += 1
+            total_score += 10
+        else:
+            items_no += 1
+
+    # Update session status
+    session.status = SessionStatus.SUBMITTED
+    session.submitted_at = datetime.utcnow()
+
+    await db.commit()
+
+    logger.info(f"Checklist submitted for session {session_id}")
+    logger.info(f"Final score: {total_score}/100 ({items_yes} YES, {items_no} NO)")
+
+    return ChecklistSubmitResponse(
+        session_id=session_id,
+        total_score=total_score,
+        items_yes=items_yes,
+        items_no=items_no,
+        submitted_at=session.submitted_at,
+        message=f"Checklist submitted successfully! Score: {total_score}/100"
+    )

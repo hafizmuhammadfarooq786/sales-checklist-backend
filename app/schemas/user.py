@@ -15,8 +15,8 @@ class UserBase(BaseModel):
 
 
 class UserCreate(UserBase):
-    """Schema for creating a user (from Clerk webhook)"""
-    clerk_user_id: str
+    """Schema for creating a user via registration"""
+    password: str = Field(min_length=8, description="Password must be at least 8 characters")
     role: UserRole = UserRole.REP
 
 
@@ -32,11 +32,11 @@ class UserUpdate(BaseModel):
 class UserResponse(UserBase):
     """Response schema for users"""
     id: int
-    clerk_user_id: str
     role: UserRole
     organization_id: Optional[int] = None
     team_id: Optional[int] = None
     is_active: bool
+    is_verified: bool
     last_login: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
@@ -69,6 +69,53 @@ class OrganizationResponse(BaseModel):
     max_users: int
     created_at: datetime
     updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class UserLogin(BaseModel):
+    """Schema for user login"""
+    email: EmailStr
+    password: str
+
+
+class Token(BaseModel):
+    """JWT Token response schema"""
+    access_token: str
+    token_type: str = "bearer"
+    expires_in: int
+    user: UserResponse
+
+
+class PasswordReset(BaseModel):
+    """Schema for password reset request"""
+    email: EmailStr
+
+
+class PasswordResetConfirm(BaseModel):
+    """Schema for password reset confirmation"""
+    token: str
+    new_password: str = Field(min_length=8, description="Password must be at least 8 characters")
+
+
+class EmailVerification(BaseModel):
+    """Schema for email verification"""
+    token: str
+
+
+class PasswordChange(BaseModel):
+    """Schema for changing password (authenticated users)"""
+    current_password: str
+    new_password: str = Field(min_length=8, description="New password must be at least 8 characters")
+
+
+class PipelineMetrics(BaseModel):
+    """Response schema for user pipeline metrics"""
+    total_sessions: int = Field(description="Total number of sessions")
+    active_sessions: int = Field(description="Sessions not in draft, failed, or completed status")
+    completed_sessions: int = Field(description="Successfully completed sessions")
+    total_opportunities: int = Field(description="Total unique opportunities")
 
     class Config:
         from_attributes = True

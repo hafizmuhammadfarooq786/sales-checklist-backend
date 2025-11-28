@@ -21,19 +21,22 @@ class Settings(BaseSettings):
     ENVIRONMENT: str = Field(default="development")
     DEBUG: bool = Field(default=False)
 
-    # Security
-    SECRET_KEY: str = Field(default="your-secret-key-change-in-production")
+    # Security & JWT Authentication
+    SECRET_KEY: str = Field(default="your-secret-key-change-in-production-make-it-very-long-and-random")
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 7  # 7 days
-
-    # Clerk Authentication
-    CLERK_PUBLISHABLE_KEY: str = Field(default="")
-    CLERK_SECRET_KEY: str = Field(default="")
-    CLERK_JWT_VERIFICATION_KEY: str = Field(default="")
+    
+    # Password validation
+    MIN_PASSWORD_LENGTH: int = 8
+    REQUIRE_PASSWORD_UPPERCASE: bool = True
+    REQUIRE_PASSWORD_LOWERCASE: bool = True
+    REQUIRE_PASSWORD_NUMBERS: bool = True
+    REQUIRE_PASSWORD_SPECIAL: bool = False
 
     # Database
     DATABASE_URL: str = Field(
-        default="postgresql://neondb_owner:npg_cnFle7kXxLd0@ep-lucky-breeze-a4i6m6jo-pooler.us-east-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require"
+        default="postgresql+asyncpg://username:password@localhost:5432/sales_checklist",
+        description="Database connection URL - should be set via environment variable"
     )
     DB_ECHO: bool = Field(default=False)
 

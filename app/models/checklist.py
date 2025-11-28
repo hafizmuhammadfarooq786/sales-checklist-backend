@@ -76,3 +76,38 @@ class CoachingQuestion(Base, TimestampMixin):
 
     # Relationships
     item = relationship("ChecklistItem", back_populates="coaching_questions")
+
+
+class CustomerChecklist(Base, TimestampMixin):
+    """
+    Track checklist progress for each customer over time
+    One row per customer per session - shows how checklist evolves during sales process
+    """
+    __tablename__ = "customer_checklists"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    # Customer info (denormalized for reporting)
+    customer_name = Column(String(255), nullable=False, index=True)
+    opportunity_name = Column(String(255), nullable=True)
+
+    # Session reference
+    session_id = Column(Integer, ForeignKey("sessions.id", ondelete="CASCADE"), nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+
+    # Snapshot of scores at this point in time
+    total_score = Column(Integer, default=0, nullable=False)  # 0-100
+    items_completed = Column(Integer, default=0, nullable=False)  # 0-10
+
+    # Track changes from previous session
+    score_change = Column(Integer, default=0)  # +/- from last session
+    items_improved = Column(Integer, default=0)  # Count of items that went from No → Yes
+    items_declined = Column(Integer, default=0)  # Count of items that went from Yes → No
+
+    # Deal stage at time of session
+    deal_stage = Column(String(100), nullable=True)
+
+    # Relationships
+    from sqlalchemy.orm import relationship as rel
+    session = rel("Session")
+    user = rel("User")

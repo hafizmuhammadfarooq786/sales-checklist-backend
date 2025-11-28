@@ -10,9 +10,10 @@ from app.models.base import Base, TimestampMixin
 
 class UserRole(str, enum.Enum):
     """User roles for RBAC"""
-    ADMIN = "admin"
-    MANAGER = "manager"
-    REP = "rep"
+    SYSTEM_ADMIN = "system_admin"  # Product admin - view only, no sessions
+    ADMIN = "admin"  # Organization admin
+    MANAGER = "manager"  # Team manager/coach
+    REP = "rep"  # Sales representative
 
 
 class Organization(Base, TimestampMixin):
@@ -50,13 +51,13 @@ class Team(Base, TimestampMixin):
 
 class User(Base, TimestampMixin):
     """
-    User table - synced from Clerk via webhook
+    User table - custom JWT authentication system
     """
     __tablename__ = "users"
 
     id = Column(Integer, primary_key=True, index=True)
-    clerk_user_id = Column(String(255), unique=True, nullable=False, index=True)
     email = Column(String(255), unique=True, nullable=False, index=True)
+    password_hash = Column(String(255), nullable=False)
     first_name = Column(String(100), nullable=True)
     last_name = Column(String(100), nullable=True)
 
@@ -65,9 +66,20 @@ class User(Base, TimestampMixin):
     organization_id = Column(Integer, ForeignKey("organizations.id", ondelete="SET NULL"), nullable=True)
     team_id = Column(Integer, ForeignKey("teams.id", ondelete="SET NULL"), nullable=True)
 
-    # Status
+    # Status & Security
     is_active = Column(Boolean, default=True, nullable=False)
+    is_verified = Column(Boolean, default=False, nullable=False)
     last_login = Column(DateTime, nullable=True)
+    failed_login_attempts = Column(Integer, default=0, nullable=False)
+    locked_until = Column(DateTime, nullable=True)
+
+    # Password reset
+    password_reset_token = Column(String(255), nullable=True)
+    password_reset_expires = Column(DateTime, nullable=True)
+
+    # Email verification
+    email_verification_token = Column(String(255), nullable=True)
+    email_verification_expires = Column(DateTime, nullable=True)
 
     # Relationships
     organization = relationship("Organization", back_populates="users")

@@ -16,6 +16,7 @@ redis[hiredis]==5.2.0
 # Authentication & Security
 python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
+bcrypt==4.0.1
 python-multipart==0.0.17
 
 # AWS SDK
@@ -24,6 +25,13 @@ aioboto3==13.2.0
 
 # OpenAI
 openai==1.54.3
+
+# ElevenLabs TTS
+elevenlabs==1.9.0
+
+# PDF Generation
+reportlab==4.2.4
+Pillow==10.4.0
 
 # Celery for async tasks
 celery[redis]==5.4.0

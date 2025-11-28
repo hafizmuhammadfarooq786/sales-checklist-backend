@@ -39,3 +39,13 @@ async def get_db() -> AsyncSession:
             raise
         finally:
             await session.close()
+
+
+def get_db_session() -> AsyncSession:
+    """
+    Get database session for background tasks.
+    Usage in background tasks:
+        async with get_db_session() as db:
+            # database operations
+    """
+    return AsyncSessionLocal()
