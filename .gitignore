@@ -31,6 +31,10 @@ ENV/
 .coverage
 htmlcov/
 .tox/
+pytest.ini
+test_*.py
+test_files/
+test_venv/
 
 # Logs
 *.log
