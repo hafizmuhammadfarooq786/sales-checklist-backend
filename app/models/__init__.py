@@ -14,8 +14,7 @@ from app.models.session import (
     SessionResponse,
 )
 from app.models.scoring import ScoringResult, CoachingFeedback, RiskBand
-from app.models.report import Report, ReportFormat, SalesforceSync
-from app.models.audit import AuditLog, Setting
+from app.models.report import Report, ReportFormat
 
 # Export all for easy imports
 __all__ = [
@@ -38,7 +37,4 @@ __all__ = [
     "RiskBand",
     "Report",
     "ReportFormat",
-    "SalesforceSync",
-    "AuditLog",
-    "Setting",
 ]

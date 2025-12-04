@@ -50,7 +50,6 @@ class TeamResponse(BaseModel):
     id: int
     organization_id: int
     name: str
-    description: Optional[str] = None
     is_active: bool
     created_at: datetime
     updated_at: datetime
@@ -63,10 +62,7 @@ class OrganizationResponse(BaseModel):
     """Response schema for organizations"""
     id: int
     name: str
-    domain: Optional[str] = None
     is_active: bool
-    scoring_mode: str
-    max_users: int
     created_at: datetime
     updated_at: datetime
 

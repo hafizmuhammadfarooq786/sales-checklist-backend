@@ -36,10 +36,6 @@ class ScoringResult(Base, TimestampMixin):
     top_strengths = Column(JSON, nullable=True)  # Top 3 strongest categories
     top_gaps = Column(JSON, nullable=True)  # Bottom 3 weakest categories
 
-    # Comparison with previous sessions
-    previous_score = Column(Float, nullable=True)
-    score_change = Column(Float, nullable=True)  # Positive = improvement
-
     # Metadata
     items_validated = Column(Integer, nullable=False, default=0)  # Count of items with True
     items_total = Column(Integer, nullable=False, default=92)

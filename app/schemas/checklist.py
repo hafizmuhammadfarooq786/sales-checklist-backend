@@ -29,11 +29,7 @@ class ChecklistItemBase(BaseModel):
     """Base schema for checklist items"""
     title: str
     definition: str
-    key_behavior: Optional[str] = None
-    key_mindset: Optional[str] = None
     order: int
-    weight: float = 1.0
-    points: float = 1.087
 
 
 class ChecklistItemResponse(ChecklistItemBase):
@@ -54,8 +50,6 @@ class ChecklistCategoryBase(BaseModel):
     name: str
     description: Optional[str] = None
     order: int
-    default_weight: float = 1.0
-    max_score: int = 10
 
 
 class ChecklistCategoryResponse(ChecklistCategoryBase):
@@ -93,7 +87,6 @@ class ChecklistItemInfo(BaseModel):
     id: int
     title: str
     definition: str
-    key_behavior: Optional[str] = None
     order: int
 
     class Config:

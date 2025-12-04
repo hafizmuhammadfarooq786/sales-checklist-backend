@@ -16,7 +16,6 @@ from app.models import (
     ChecklistItem,
     CoachingQuestion,
     Organization,
-    Setting,
 )
 
 
@@ -146,73 +145,14 @@ async def seed_categories(db: AsyncSession) -> dict[str, ChecklistCategory]:
 
 
 async def seed_default_organization(db: AsyncSession) -> Organization:
-    """Create default organization"""
-    print("\\n🌱 Seeding default organization...")
+    """
+    DEPRECATED: No longer creates a default organization.
+    Organizations should be created dynamically during user registration.
 
-    result = await db.execute(
-        select(Organization).where(Organization.name == "The Millau Group Global")
-    )
-    org = result.scalar_one_or_none()
-
-    if org:
-        print("  ⏭️  Organization already exists")
-        return org
-
-    org = Organization(
-        name="The Millau Group Global",
-        domain="millaugroupglobal.com",
-        scoring_mode="equal_weight",
-        max_users=10000,
-    )
-    db.add(org)
-    await db.commit()
-    print("✅ Created organization: The Millau Group Global")
-
-    return org
-
-
-async def seed_settings(db: AsyncSession):
-    """Create default system settings"""
-    print("\\n🌱 Seeding system settings...")
-
-    default_settings = [
-        {
-            "key": "risk_band_red_threshold",
-            "value": "60",
-            "description": "Scores below this are marked as RED (at risk)",
-        },
-        {
-            "key": "risk_band_yellow_threshold",
-            "value": "80",
-            "description": "Scores below this (but above red) are marked as YELLOW (caution)",
-        },
-        {
-            "key": "default_scoring_mode",
-            "value": "equal_weight",
-            "description": "Default scoring algorithm: equal_weight, weighted, or custom",
-        },
-        {
-            "key": "points_per_item",
-            "value": "1.087",
-            "description": "Default points per checklist item (100 / 92 = 1.087)",
-        },
-    ]
-
-    for setting_data in default_settings:
-        result = await db.execute(
-            select(Setting).where(Setting.key == setting_data["key"])
-        )
-        existing = result.scalar_one_or_none()
-
-        if not existing:
-            setting = Setting(**setting_data)
-            db.add(setting)
-            print(f"  ✅ Created setting: {setting_data['key']}")
-        else:
-            print(f"  ⏭️  Setting '{setting_data['key']}' already exists")
-
-    await db.commit()
-    print("✅ Created default settings")
+    This function is kept for backward compatibility but does nothing.
+    """
+    print("\\n⏭️  Skipping default organization (created on-demand during registration)")
+    return None
 
 
 async def seed_sample_items(db: AsyncSession, categories: dict):
@@ -277,7 +217,6 @@ async def main():
             # Seed in order
             await seed_default_organization(db)
             categories = await seed_categories(db)
-            await seed_settings(db)
             await seed_sample_items(db, categories)
 
             print("\\n" + "=" * 60)
@@ -285,8 +224,6 @@ async def main():
             print("=" * 60)
             print("\\n📊 Summary:")
             print(f"  • 10 Checklist Categories created")
-            print(f"  • 1 Organization created")
-            print(f"  • 4 System settings configured")
             print(f"  • Sample items created")
             print("\\n⚠️  TODO: Parse 10 Excel files to import all 92 checklist items")
             print("\\n")

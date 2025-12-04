@@ -16,7 +16,12 @@ from app.schemas.session import (
     SessionResponse,
     SessionListResponse,
 )
-from app.api.dependencies import get_current_user_id
+from app.api.dependencies import (
+    get_current_user_id,
+    get_current_user,
+    get_session_access_filter,
+    check_session_access,
+)
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -67,7 +72,7 @@ async def create_session(
 
 @router.get("/", response_model=SessionListResponse)
 async def list_sessions(
-    user_id: int = Depends(get_current_user_id),
+    current_user: User = Depends(get_current_user),
     page: int = 1,
     page_size: int = 20,
     status_filter: SessionStatus = None,
@@ -75,17 +80,25 @@ async def list_sessions(
 ):
     """
     List sessions for the authenticated user with pagination.
+
+    RBAC Applied:
+    - REP: See only own sessions
+    - MANAGER: See all sessions from users in their team
+    - ADMIN: See all sessions from users in their organization
     """
-    # Build query
-    query = select(Session).where(Session.user_id == user_id)
+    # Build role-based access filter
+    access_filter = get_session_access_filter(current_user)
+
+    # Build query with RBAC filter
+    query = select(Session).where(access_filter)
 
     if status_filter:
         query = query.where(Session.status == status_filter)
 
     query = query.order_by(Session.created_at.desc())
 
-    # Get total count
-    count_query = select(func.count()).select_from(Session).where(Session.user_id == user_id)
+    # Get total count with RBAC filter
+    count_query = select(func.count()).select_from(Session).where(access_filter)
     if status_filter:
         count_query = count_query.where(Session.status == status_filter)
 
@@ -111,26 +124,31 @@ async def list_sessions(
 @router.get("/{session_id}", response_model=SessionResponse)
 async def get_session(
     session_id: int,
-    user_id: int = Depends(get_current_user_id),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """
     Get a specific session by ID.
-    User can only access their own sessions.
-    """
-    result = await db.execute(
-        select(Session).where(
-            Session.id == session_id,
-            Session.user_id == user_id
-        )
-    )
-    session = result.scalar_one_or_none()
 
-    if not session:
+    RBAC Applied:
+    - REP: Can only access own sessions
+    - MANAGER: Can access sessions from users in their team
+    - ADMIN: Can access sessions from users in their organization
+    """
+    # Check role-based access
+    has_access = await check_session_access(session_id, current_user, db)
+
+    if not has_access:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Session not found"
         )
+
+    # Fetch the session
+    result = await db.execute(
+        select(Session).where(Session.id == session_id)
+    )
+    session = result.scalar_one_or_none()
 
     return SessionResponse.model_validate(session)
 
@@ -139,26 +157,31 @@ async def get_session(
 async def update_session(
     session_id: int,
     session_data: SessionUpdate,
-    user_id: int = Depends(get_current_user_id),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """
     Update a session.
-    User can only update their own sessions.
-    """
-    result = await db.execute(
-        select(Session).where(
-            Session.id == session_id,
-            Session.user_id == user_id
-        )
-    )
-    session = result.scalar_one_or_none()
 
-    if not session:
+    RBAC Applied:
+    - REP: Can only update own sessions
+    - MANAGER: Can update sessions from users in their team
+    - ADMIN: Can update sessions from users in their organization
+    """
+    # Check role-based access
+    has_access = await check_session_access(session_id, current_user, db)
+
+    if not has_access:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Session not found"
         )
+
+    # Fetch the session
+    result = await db.execute(
+        select(Session).where(Session.id == session_id)
+    )
+    session = result.scalar_one_or_none()
 
     # Update fields
     update_data = session_data.model_dump(exclude_unset=True)
@@ -174,26 +197,31 @@ async def update_session(
 @router.delete("/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_session(
     session_id: int,
-    user_id: int = Depends(get_current_user_id),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """
     Delete a session.
-    User can only delete their own sessions.
-    """
-    result = await db.execute(
-        select(Session).where(
-            Session.id == session_id,
-            Session.user_id == user_id
-        )
-    )
-    session = result.scalar_one_or_none()
 
-    if not session:
+    RBAC Applied:
+    - REP: Can only delete own sessions
+    - MANAGER: Can delete sessions from users in their team
+    - ADMIN: Can delete sessions from users in their organization
+    """
+    # Check role-based access
+    has_access = await check_session_access(session_id, current_user, db)
+
+    if not has_access:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Session not found"
         )
+
+    # Fetch the session
+    result = await db.execute(
+        select(Session).where(Session.id == session_id)
+    )
+    session = result.scalar_one_or_none()
 
     await db.delete(session)
     await db.commit()
@@ -222,7 +250,7 @@ from datetime import datetime
 @router.get("/{session_id}/checklist", response_model=ChecklistReviewResponse)
 async def get_checklist_for_review(
     session_id: int,
-    user_id: int = Depends(get_current_user_id),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -235,21 +263,26 @@ async def get_checklist_for_review(
     - Current score (0-100)
 
     This is the page where user reviews AI answers and can manually change them.
-    """
-    # Verify session belongs to user
-    session_result = await db.execute(
-        select(Session).where(
-            Session.id == session_id,
-            Session.user_id == user_id
-        )
-    )
-    session = session_result.scalar_one_or_none()
 
-    if not session:
+    RBAC Applied:
+    - REP: Can only access own session checklists
+    - MANAGER: Can access checklists from users in their team
+    - ADMIN: Can access checklists from users in their organization
+    """
+    # Check role-based access
+    has_access = await check_session_access(session_id, current_user, db)
+
+    if not has_access:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Session not found"
         )
+
+    # Fetch the session
+    session_result = await db.execute(
+        select(Session).where(Session.id == session_id)
+    )
+    session = session_result.scalar_one_or_none()
 
     # Get all session responses with items and coaching questions
     from sqlalchemy.orm import selectinload
@@ -340,7 +373,7 @@ async def update_checklist_item(
     session_id: int,
     item_id: int,
     update_data: ChecklistItemUpdate,
-    user_id: int = Depends(get_current_user_id),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -348,17 +381,16 @@ async def update_checklist_item(
 
     Allows the user to change the AI's answer before submitting.
     Updates the user_answer, was_changed flag, and recalculates score.
-    """
-    # Verify session belongs to user
-    session_result = await db.execute(
-        select(Session).where(
-            Session.id == session_id,
-            Session.user_id == user_id
-        )
-    )
-    session = session_result.scalar_one_or_none()
 
-    if not session:
+    RBAC Applied:
+    - REP: Can only update own session checklists
+    - MANAGER: Can update checklists from users in their team
+    - ADMIN: Can update checklists from users in their organization
+    """
+    # Check role-based access
+    has_access = await check_session_access(session_id, current_user, db)
+
+    if not has_access:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Session not found"
@@ -406,7 +438,7 @@ async def update_checklist_item(
 @router.post("/{session_id}/checklist/submit", response_model=ChecklistSubmitResponse)
 async def submit_checklist(
     session_id: int,
-    user_id: int = Depends(get_current_user_id),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -419,21 +451,26 @@ async def submit_checklist(
     4. (Future) Creates CustomerChecklist record for tracking over time
 
     After submission, the coach can review the results.
-    """
-    # Verify session belongs to user
-    session_result = await db.execute(
-        select(Session).where(
-            Session.id == session_id,
-            Session.user_id == user_id
-        )
-    )
-    session = session_result.scalar_one_or_none()
 
-    if not session:
+    RBAC Applied:
+    - REP: Can only submit own session checklists
+    - MANAGER: Can submit checklists from users in their team
+    - ADMIN: Can submit checklists from users in their organization
+    """
+    # Check role-based access
+    has_access = await check_session_access(session_id, current_user, db)
+
+    if not has_access:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Session not found"
         )
+
+    # Fetch the session
+    session_result = await db.execute(
+        select(Session).where(Session.id == session_id)
+    )
+    session = session_result.scalar_one_or_none()
 
     # Get all session responses
     responses_result = await db.execute(

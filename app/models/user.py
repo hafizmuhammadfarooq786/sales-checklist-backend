@@ -22,12 +22,7 @@ class Organization(Base, TimestampMixin):
 
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(255), nullable=False)
-    domain = Column(String(255), unique=True, nullable=True)  # Email domain restriction
     is_active = Column(Boolean, default=True, nullable=False)
-
-    # Settings
-    scoring_mode = Column(String(50), default="equal_weight")  # equal_weight, weighted, custom
-    max_users = Column(Integer, default=10000)
 
     # Relationships
     teams = relationship("Team", back_populates="organization", cascade="all, delete-orphan")
@@ -41,7 +36,6 @@ class Team(Base, TimestampMixin):
     id = Column(Integer, primary_key=True, index=True)
     organization_id = Column(Integer, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False)
     name = Column(String(255), nullable=False)
-    description = Column(String(500), nullable=True)
     is_active = Column(Boolean, default=True, nullable=False)
 
     # Relationships
@@ -85,4 +79,3 @@ class User(Base, TimestampMixin):
     organization = relationship("Organization", back_populates="users")
     team = relationship("Team", back_populates="users")
     sessions = relationship("Session", back_populates="user", cascade="all, delete-orphan")
-    audit_logs = relationship("AuditLog", back_populates="user")

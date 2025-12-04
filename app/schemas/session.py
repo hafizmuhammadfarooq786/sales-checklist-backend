@@ -35,7 +35,6 @@ class SessionResponse(BaseModel):
     status: SessionStatus
     submitted_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
-    is_synced: bool
     created_at: datetime
     updated_at: datetime
 

@@ -110,5 +110,74 @@ def require_roles(*roles: UserRole):
                 detail="Insufficient permissions"
             )
         return current_user
-    
+
     return check_user_role
+
+
+def get_session_access_filter(current_user: User):
+    """
+    Build SQLAlchemy filter conditions based on user role for session access.
+
+    Role-Based Access Logic:
+    - ADMIN: Can access ALL sessions in their organization
+    - MANAGER: Can access sessions from users in their team
+    - REP: Can only access their own sessions
+
+    Returns:
+        SQLAlchemy filter condition to be used in WHERE clause
+    """
+    from app.models.session import Session
+
+    if current_user.role == UserRole.ADMIN:
+        # Admin sees all sessions in their organization
+        if current_user.organization_id:
+            # Filter by organization - get all users in org, then their sessions
+            return Session.user.has(organization_id=current_user.organization_id)
+        else:
+            # No organization assigned - only see own sessions
+            return Session.user_id == current_user.id
+
+    elif current_user.role == UserRole.MANAGER:
+        # Manager sees team sessions
+        if current_user.team_id:
+            # Filter by team - get all users in team, then their sessions
+            return Session.user.has(team_id=current_user.team_id)
+        else:
+            # No team assigned - only see own sessions
+            return Session.user_id == current_user.id
+
+    else:  # REP or any other role
+        # Rep sees only own sessions
+        return Session.user_id == current_user.id
+
+
+async def check_session_access(
+    session_id: int,
+    current_user: User,
+    db: AsyncSession
+) -> bool:
+    """
+    Check if current user has access to a specific session based on their role.
+
+    Args:
+        session_id: The session ID to check access for
+        current_user: The current authenticated user
+        db: Database session
+
+    Returns:
+        True if user has access, False otherwise
+    """
+    from app.models.session import Session
+
+    # Build query with role-based filter
+    access_filter = get_session_access_filter(current_user)
+
+    result = await db.execute(
+        select(Session).where(
+            Session.id == session_id,
+            access_filter
+        )
+    )
+
+    session = result.scalar_one_or_none()
+    return session is not None

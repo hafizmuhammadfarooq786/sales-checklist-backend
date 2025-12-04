@@ -16,7 +16,7 @@ from app.schemas.user import (
     OrganizationResponse,
     PipelineMetrics,
 )
-from app.api.dependencies import get_current_user_id, get_current_user
+from app.api.dependencies import get_current_user_id, get_current_user, get_session_access_filter
 
 router = APIRouter()
 
@@ -105,19 +105,27 @@ async def get_current_user_metrics(
     """
     Get current user's pipeline metrics.
 
-    Returns aggregated metrics based on user's sessions:
+    Returns aggregated metrics based on role:
     - Total sessions count
     - Active sessions (in progress, not draft/failed/completed)
     - Completed sessions count
     - Total unique opportunities
+
+    RBAC Applied:
+    - REP: Metrics from own sessions only
+    - MANAGER: Metrics from all users in their team
+    - ADMIN: Metrics from all users in their organization
     """
-    # Get total sessions count
+    # Build role-based access filter
+    access_filter = get_session_access_filter(current_user)
+
+    # Get total sessions count with RBAC filter
     total_result = await db.execute(
-        select(func.count(Session.id)).where(Session.user_id == current_user.id)
+        select(func.count(Session.id)).where(access_filter)
     )
     total_sessions = total_result.scalar() or 0
 
-    # Get active sessions (processing, analyzing, scoring, pending_review)
+    # Get active sessions (processing, analyzing, scoring, pending_review) with RBAC filter
     active_statuses = [
         SessionStatus.UPLOADING,
         SessionStatus.PROCESSING,
@@ -127,25 +135,25 @@ async def get_current_user_metrics(
     ]
     active_result = await db.execute(
         select(func.count(Session.id)).where(
-            Session.user_id == current_user.id,
+            access_filter,
             Session.status.in_(active_statuses)
         )
     )
     active_sessions = active_result.scalar() or 0
 
-    # Get completed sessions count
+    # Get completed sessions count with RBAC filter
     completed_result = await db.execute(
         select(func.count(Session.id)).where(
-            Session.user_id == current_user.id,
+            access_filter,
             Session.status == SessionStatus.COMPLETED
         )
     )
     completed_sessions = completed_result.scalar() or 0
 
-    # Get total unique opportunities (count distinct opportunity_name where not null)
+    # Get total unique opportunities (count distinct opportunity_name where not null) with RBAC filter
     opportunities_result = await db.execute(
         select(func.count(distinct(Session.opportunity_name))).where(
-            Session.user_id == current_user.id,
+            access_filter,
             Session.opportunity_name.isnot(None),
             Session.opportunity_name != ""
         )

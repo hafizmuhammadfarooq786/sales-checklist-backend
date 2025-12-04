@@ -39,25 +39,3 @@ class Report(Base, TimestampMixin):
 
     # Relationships
     session = relationship("Session", back_populates="report")
-
-
-class SalesforceSync(Base, TimestampMixin):
-    """
-    Salesforce integration sync logs
-    """
-    __tablename__ = "salesforce_sync"
-
-    id = Column(Integer, primary_key=True, index=True)
-    session_id = Column(Integer, ForeignKey("sessions.id", ondelete="CASCADE"), nullable=False)
-
-    # Salesforce details
-    salesforce_object_type = Column(String(100), nullable=False)  # Lead, Opportunity, etc.
-    salesforce_object_id = Column(String(255), nullable=True)  # Salesforce record ID
-
-    # Sync status
-    is_synced = Column(Boolean, default=False)
-    synced_at = Column(DateTime, nullable=True)
-    sync_error = Column(String(1000), nullable=True)
-
-    # Data synced
-    fields_synced = Column(String(1000), nullable=True)  # JSON string of field names

@@ -42,10 +42,6 @@ class Session(Base, TimestampMixin):
     submitted_at = Column(DateTime, nullable=True)
     completed_at = Column(DateTime, nullable=True)
 
-    # Offline sync
-    is_synced = Column(Boolean, default=True)  # False if created offline
-    sync_attempted_at = Column(DateTime, nullable=True)
-
     # Relationships
     user = relationship("User", back_populates="sessions")
     audio_file = relationship("AudioFile", back_populates="session", uselist=False, cascade="all, delete-orphan")
@@ -70,7 +66,6 @@ class AudioFile(Base, TimestampMixin):
     file_path = Column(String(1000), nullable=False)  # S3 URL or local path
     storage_type = Column(String(50), default="local")  # 's3' or 'local'
     file_size = Column(Integer, nullable=False)  # Bytes
-    duration_seconds = Column(Float, nullable=True)  # Audio duration in seconds
     mime_type = Column(String(100), nullable=False)
 
     # Relationships
@@ -123,7 +118,6 @@ class SessionResponse(Base, TimestampMixin):
     # Manual override by user (rep can change before submitting)
     user_answer = Column(Boolean, nullable=True)  # User's override answer
     was_changed = Column(Boolean, default=False)  # Track if user changed AI answer
-    changed_at = Column(DateTime, nullable=True)  # When user made the change
 
     # Score (calculated from final answer)
     score = Column(Integer, default=0, nullable=False)  # 0 or 10
