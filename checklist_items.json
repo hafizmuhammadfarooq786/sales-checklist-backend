@@ -1,0 +1,52 @@
+[
+  {
+    "order": 1,
+    "title": "Customer Fit",
+    "definition": "A) Decision Influencers (DIs) are accessible.  B) DIs appreciate our brand and value.  C) Meets minimum size. D) DIs practice open and honest communication. E) And the opportunity is worth my time."
+  },
+  {
+    "order": 2,
+    "title": "Trigger Event & Impact (Results)",
+    "definition": "A) I know what\u2019s causing the DIs to want to make a buying decision. B) And the measurable results they are seeking."
+  },
+  {
+    "order": 3,
+    "title": "Sales Target",
+    "definition": "A) I know what they are planning on buying, how much and when."
+  },
+  {
+    "order": 4,
+    "title": "Decision Making Process",
+    "definition": "A) I have identified the steps in the DMP. B) The criteria they are going to use to evaluate solutions. C) Who is impacting the decision. D) When they are making the decision. E) And verified the project has or can get funding."
+  },
+  {
+    "order": 5,
+    "title": "Decision Influencers (DI)",
+    "definition": "A) I have identified AND engaged the key Specifiers, Utilizers and the Finalizer."
+  },
+  {
+    "order": 6,
+    "title": "Mentor",
+    "definition": "A) I have developed someone who wants me to be successful. B) And is able to make things happen with the other Decision Influencers."
+  },
+  {
+    "order": 7,
+    "title": "Trigger Priority",
+    "definition": "A) I have validated that all the key Decision Influencers believe this project is a priority."
+  },
+  {
+    "order": 8,
+    "title": "Alternatives",
+    "definition": "A) I have identified all of the key DIs Alternatives for the investment (including the Finalizer). B) And developed appropriate strategies."
+  },
+  {
+    "order": 9,
+    "title": "Our Solution Ranking",
+    "definition": "A) Our Solution uniquely solves the Trigger Event."
+  },
+  {
+    "order": 10,
+    "title": "Individual Impact",
+    "definition": "A) I have identified how all the key DIs will be personally impacted when we Solve the Trigger Event with our Solution."
+  }
+]
