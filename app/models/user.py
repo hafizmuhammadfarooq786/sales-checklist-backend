@@ -10,10 +10,10 @@ from app.models.base import Base, TimestampMixin
 
 class UserRole(str, enum.Enum):
     """User roles for RBAC"""
-    SYSTEM_ADMIN = "system_admin"  # Product admin - view only, no sessions
-    ADMIN = "admin"  # Organization admin
-    MANAGER = "manager"  # Team manager/coach
-    REP = "rep"  # Sales representative
+    SYSTEM_ADMIN = "SYSTEM_ADMIN"  # Product admin - view only, no sessions
+    ADMIN = "ADMIN"  # Organization admin
+    MANAGER = "MANAGER"  # Team manager/coach
+    REP = "REP"  # Sales representative
 
 
 class Organization(Base, TimestampMixin):
