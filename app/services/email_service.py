@@ -34,7 +34,7 @@ class TemplateLoader(BaseLoader):
 <body>
     <div class="header">
         <h1>{{ project_name }}</h1>
-        <p>Welcome to the Sales Checklist™ Platform</p>
+        <p>Welcome to The Sales Checklist™ Platform</p>
     </div>
     <div class="content">
         <h2>Verify Your Email Address</h2>

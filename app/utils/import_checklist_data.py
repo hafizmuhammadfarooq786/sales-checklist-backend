@@ -384,7 +384,7 @@ async def seed_settings(db: AsyncSession):
 async def main():
     """Main import function"""
     print("\n" + "=" * 80)
-    print("🚀 IMPORTING COMPLETE SALES CHECKLIST™ DATA")
+    print("🚀 IMPORTING COMPLETE The Sales Checklist™ DATA")
     print("📊 92 Items from 10 Excel Files")
     print("=" * 80)
 

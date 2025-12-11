@@ -1,13 +1,10 @@
-"""
-User API endpoints
-"""
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, distinct
 from sqlalchemy.orm import selectinload
 
 from app.db.session import get_db
-from app.models import User, Team, Organization
+from app.models import User
 from app.models.session import Session, SessionStatus
 from app.schemas.user import (
     UserResponse,
@@ -16,11 +13,12 @@ from app.schemas.user import (
     OrganizationResponse,
     PipelineMetrics,
 )
-from app.api.dependencies import get_current_user_id, get_current_user, get_session_access_filter
+from app.api.dependencies import get_current_user, get_session_access_filter
 
 router = APIRouter()
 
 
+# Get current authenticated user's profile
 @router.get("/me", response_model=UserResponse)
 async def get_current_user_profile(
     current_user: User = Depends(get_current_user)
@@ -31,6 +29,7 @@ async def get_current_user_profile(
     return UserResponse.model_validate(current_user)
 
 
+# Update current user's profile
 @router.patch("/me", response_model=UserResponse)
 async def update_current_user(
     user_data: UserUpdate,
@@ -51,6 +50,7 @@ async def update_current_user(
     return UserResponse.model_validate(current_user)
 
 
+# Get current user's team information
 @router.get("/me/team", response_model=TeamResponse)
 async def get_current_user_team(
     current_user: User = Depends(get_current_user),
@@ -74,6 +74,7 @@ async def get_current_user_team(
     )
 
 
+# Get current user's organization information
 @router.get("/me/organization", response_model=OrganizationResponse)
 async def get_current_user_organization(
     current_user: User = Depends(get_current_user),
@@ -97,6 +98,7 @@ async def get_current_user_organization(
     )
 
 
+# Get current user's pipeline metrics
 @router.get("/me/metrics", response_model=PipelineMetrics)
 async def get_current_user_metrics(
     current_user: User = Depends(get_current_user),
@@ -125,13 +127,13 @@ async def get_current_user_metrics(
     )
     total_sessions = total_result.scalar() or 0
 
-    # Get active sessions (processing, analyzing, scoring, pending_review) with RBAC filter
+    # Get active sessions (processing, analyzing, scoring) with RBAC filter
     active_statuses = [
         SessionStatus.UPLOADING,
         SessionStatus.PROCESSING,
         SessionStatus.ANALYZING,
         SessionStatus.SCORING,
-        SessionStatus.PENDING_REVIEW
+        SessionStatus.PENDING_REVIEW,
     ]
     active_result = await db.execute(
         select(func.count(Session.id)).where(

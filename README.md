@@ -1,4 +1,4 @@
-# Sales Checklist™ API - Backend
+# The Sales Checklist™ API - Backend
 
 > **AI-Powered B2B Sales Conversation Analysis Platform**
 > Transform your sales conversations into actionable insights with AI-driven checklist validation, automatic transcription, and intelligent coaching.
@@ -13,7 +13,7 @@
 
 ## 📋 Overview
 
-The **Sales Checklist™ API** is an enterprise-grade backend system that leverages cutting-edge AI to analyze B2B sales conversations. It validates 10 critical success factors, generates intelligent coaching insights, and provides actionable feedback to improve sales performance.
+The **The Sales Checklist™ API** is an enterprise-grade backend system that leverages cutting-edge AI to analyze B2B sales conversations. It validates 10 critical success factors, generates intelligent coaching insights, and provides actionable feedback to improve sales performance.
 
 ### Key Features
 
@@ -34,35 +34,42 @@ The **Sales Checklist™ API** is an enterprise-grade backend system that levera
 ## 🚀 Tech Stack
 
 ### Core Framework
+
 - **[FastAPI](https://fastapi.tiangolo.com/)** `0.115` - Modern, high-performance Python web framework
 - **[Uvicorn](https://www.uvicorn.org/)** `0.32` - Lightning-fast ASGI server
 - **[Pydantic](https://docs.pydantic.dev/)** `2.9` - Data validation using Python type annotations
 
 ### Database & ORM
+
 - **[PostgreSQL](https://www.postgresql.org/)** - Primary relational database
 - **[SQLAlchemy](https://www.sqlalchemy.org/)** `2.0` - Async ORM with modern Python support
 - **[Alembic](https://alembic.sqlalchemy.org/)** `1.13` - Database migration tool
 - **[asyncpg](https://github.com/MagicStack/asyncpg)** - High-performance async PostgreSQL driver
 
 ### Caching & Queue
+
 - **[Redis](https://redis.io/)** `5.2` - In-memory data store for caching and task queue
 - **[Celery](https://docs.celeryq.dev/)** `5.4` - Distributed task queue for background jobs
 - **[Flower](https://flower.readthedocs.io/)** `2.0` - Real-time Celery task monitoring
 
 ### AI & Machine Learning
+
 - **[OpenAI API](https://platform.openai.com/)** `1.54` - GPT-4 for analysis, Whisper for transcription
 - **[ElevenLabs](https://elevenlabs.io/)** `1.9` - Neural text-to-speech for coaching audio
 
 ### AWS Services
+
 - **[boto3](https://boto3.amazonaws.com/)** `1.35` - AWS SDK for Python
 - **Amazon S3** - Object storage for audio files and reports
 - **Amazon SES** - Email delivery service
 
 ### Security & Authentication
+
 - **[python-jose](https://python-jose.readthedocs.io/)** `3.3` - JWT token generation and validation
 - **[passlib](https://passlib.readthedocs.io/)** `1.7` - Password hashing with bcrypt
 
 ### Utilities
+
 - **[ReportLab](https://www.reportlab.com/)** `4.2` - PDF generation
 - **[Sentry](https://sentry.io/)** `2.17` - Application monitoring and error tracking
 - **[httpx](https://www.python-httpx.org/)** `0.27` - Modern async HTTP client
@@ -81,10 +88,12 @@ Before you begin, ensure you have the following installed:
 ### External Services (API Keys Required)
 
 1. **OpenAI API** - Required for transcription and analysis
+
    - Sign up: https://platform.openai.com/
    - Get API key: https://platform.openai.com/api-keys
 
 2. **AWS Account** - Required for S3 and SES
+
    - Sign up: https://aws.amazon.com/
    - Create IAM user with S3 and SES permissions
 
@@ -136,7 +145,7 @@ nano .env  # or use your preferred editor
 
 ```env
 # Database (PostgreSQL)
-DATABASE_URL=postgresql+asyncpg://user:password@localhost:5432/sales_checklist
+DATABASE_URL=postgresql://user:password@localhost:5432/sales_checklist
 
 # Redis
 REDIS_URL=redis://localhost:6379/0
@@ -204,6 +213,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
 The API will be available at:
+
 - **API Base**: http://localhost:8000/api/v1
 - **Interactive Docs (Swagger)**: http://localhost:8000/docs
 - **Alternative Docs (ReDoc)**: http://localhost:8000/redoc
@@ -318,12 +328,14 @@ Authorization: Bearer <your-jwt-token>
 ### Key Endpoints
 
 #### Authentication
+
 - `POST /auth/register` - Create new user account
 - `POST /auth/login` - Login and get JWT token
 - `POST /auth/forgot-password` - Request password reset
 - `POST /auth/reset-password` - Reset password with token
 
 #### Sessions
+
 - `POST /sessions/` - Create new sales conversation session
 - `GET /sessions/` - List all sessions (paginated)
 - `GET /sessions/{id}` - Get session details
@@ -335,11 +347,13 @@ Authorization: Bearer <your-jwt-token>
 - `POST /sessions/{id}/report/email` - Email report
 
 #### Checklists
+
 - `GET /checklists/summary` - Get checklist summary
 - `GET /checklists/categories` - List all categories
 - `GET /checklists/items` - List all checklist items
 
 #### Users
+
 - `GET /users/me` - Get current user profile
 - `PATCH /users/me` - Update user profile
 - `GET /users/me/metrics` - Get user performance metrics
@@ -347,6 +361,7 @@ Authorization: Bearer <your-jwt-token>
 ### Interactive API Docs
 
 Visit **http://localhost:8000/docs** for:
+
 - Interactive API explorer
 - Request/response schemas
 - Try-it-out functionality
@@ -453,6 +468,7 @@ docker run -p 8000:8000 --env-file .env sales-checklist-api
 ### Environment Variables for Production
 
 Ensure these are set in your production environment:
+
 - `ENVIRONMENT=production`
 - `DEBUG=False`
 - Secure `SECRET_KEY` (generate with `openssl rand -hex 32`)
@@ -498,6 +514,7 @@ SENTRY_DSN=https://your-sentry-dsn@sentry.io/project-id
 ### Celery Flower Dashboard
 
 Monitor background tasks at http://localhost:5555:
+
 - Task status (pending, success, failed)
 - Worker health
 - Task execution times
@@ -556,6 +573,7 @@ For questions, issues, or feature requests:
 ## 🙏 Acknowledgments
 
 Built with:
+
 - [FastAPI](https://fastapi.tiangolo.com/) - Modern Python web framework
 - [OpenAI](https://openai.com/) - GPT-4 and Whisper AI models
 - [SQLAlchemy](https://www.sqlalchemy.org/) - Python SQL toolkit

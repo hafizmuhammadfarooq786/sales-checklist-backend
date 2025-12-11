@@ -1,5 +1,5 @@
 """
-Sales Checklist™ API - Main Application
+The Sales Checklist™ API - Main Application
 """
 import logging
 from logging.handlers import RotatingFileHandler
@@ -62,7 +62,7 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     """Lifespan event handler for startup and shutdown."""
     # Startup
-    logger.info("🚀 Starting Sales Checklist API...")
+    logger.info("Starting The Sales Checklist™ API...")
     logger.info(f"Environment: {settings.ENVIRONMENT}")
     logger.info(f"API Version: {settings.API_V1_STR}")
 
@@ -77,7 +77,7 @@ async def lifespan(app: FastAPI):
     yield
 
     # Shutdown
-    logger.info("🛑 Shutting down Sales Checklist API...")
+    logger.info("🛑 Shutting down The Sales Checklist™ API...")
     await engine.dispose()
     logger.info("Database connections closed")
 
@@ -122,7 +122,7 @@ async def health_check():
 async def root():
     """Root endpoint."""
     return {
-        "message": "Sales Checklist™ API",
+        "message": "The Sales Checklist™ API",
         "docs": f"{settings.API_V1_STR}/docs",
         "health": "/health"
     }

@@ -1,4 +1,4 @@
-version: '3.8'
+version: "3.8"
 
 services:
   api:
@@ -7,7 +7,7 @@ services:
       - "8000:8000"
     environment:
       - ENVIRONMENT=production
-      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/sales_checklist
+      - DATABASE_URL=postgresql://neondb_owner:npg_cnFle7kXxLd0@ep-lucky-breeze-a4i6m6jo-pooler.us-east-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require
       - REDIS_URL=redis://redis:6379/0
       - CELERY_BROKER_URL=redis://redis:6379/1
       - CELERY_RESULT_BACKEND=redis://redis:6379/2
@@ -58,7 +58,7 @@ services:
     command: celery -A app.celery_app worker --loglevel=info
     environment:
       - ENVIRONMENT=production
-      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/sales_checklist
+      - DATABASE_URL=postgresql://neondb_owner:npg_cnFle7kXxLd0@ep-lucky-breeze-a4i6m6jo-pooler.us-east-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require
       - REDIS_URL=redis://redis:6379/0
       - CELERY_BROKER_URL=redis://redis:6379/1
       - CELERY_RESULT_BACKEND=redis://redis:6379/2

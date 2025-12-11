@@ -1,5 +1,5 @@
 """
-Checklist models - Sales Checklist™ Framework (10 essential items)
+Checklist models - The Sales Checklist™ Framework (10 essential items)
 """
 from sqlalchemy import Column, Integer, String, Text, Boolean, ForeignKey, Float
 from sqlalchemy.orm import relationship

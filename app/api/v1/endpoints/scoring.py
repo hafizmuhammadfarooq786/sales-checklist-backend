@@ -9,7 +9,7 @@ from sqlalchemy.orm import selectinload
 from typing import Dict, List
 
 from app.db.session import get_db
-from app.models.session import Session, SessionResponse
+from app.models.session import Session, SessionResponse, SessionStatus
 from app.models.checklist import ChecklistItem, ChecklistCategory
 from app.models.scoring import ScoringResult
 from app.api.dependencies import get_current_user_id

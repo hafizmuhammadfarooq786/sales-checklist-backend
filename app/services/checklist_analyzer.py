@@ -58,7 +58,6 @@ class ChecklistAnalyzer:
             items_description.append(f"""
 ITEM {idx}: {item.title}
 Definition: {item.definition}
-Key Behavior: {item.key_behavior or 'Demonstrates understanding and validation of this area'}
 """)
 
         prompt = f"""You are an expert sales coach analyzing a sales call transcript to evaluate if a salesperson demonstrated specific behaviors and validated key information.

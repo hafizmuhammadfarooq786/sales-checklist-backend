@@ -204,7 +204,7 @@ class ReportService:
 
         # Title
         elements.append(Paragraph(
-            "Sales Checklist<super>TM</super> Report",
+            "The Sales Checklist<super>TM</super> Report",
             self.styles['ReportTitle']
         ))
 
@@ -496,7 +496,7 @@ class ReportService:
         )
 
         elements.append(Paragraph(
-            f"Sales Checklist<super>TM</super> | Generated {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')} | Confidential",
+            f"The Sales Checklist<super>TM</super> | Generated {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')} | Confidential",
             footer_style
         ))
 

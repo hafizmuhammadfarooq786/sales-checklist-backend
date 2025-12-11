@@ -35,7 +35,7 @@ api_router.include_router(users.router, prefix="/users", tags=["Users"])
 async def api_root():
     """API v1 root endpoint"""
     return {
-        "message": "Sales Checklist™ API v1",
+        "message": "The Sales Checklist™ API v1",
         "status": "active",
         "version": "1.0.0",
         "endpoints": {

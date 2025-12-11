@@ -1,6 +1,3 @@
-"""
-Authentication endpoints for login, registration, and password management
-"""
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -23,6 +20,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
 
+# Register a new user account
 @router.post("/register", response_model=Token, status_code=status.HTTP_201_CREATED)
 async def register(
     user_data: UserCreate,
@@ -30,7 +28,6 @@ async def register(
 ) -> Token:
     """
     Register a new user account.
-    
     Creates a new user with hashed password and sends email verification.
     Returns JWT token for immediate login.
     """
@@ -78,7 +75,7 @@ async def register(
             detail="Failed to create user account"
         )
 
-
+# Authenticate user and return JWT token
 @router.post("/login", response_model=Token)
 async def login(
     user_credentials: UserLogin,
@@ -86,7 +83,6 @@ async def login(
 ) -> Token:
     """
     Authenticate user and return JWT token.
-    
     Validates email/password combination and returns access token.
     Implements account locking after failed attempts.
     """
@@ -96,24 +92,17 @@ async def login(
     )
     
     if not user:
-        # Don't reveal whether email exists or password is wrong
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
     
-    # Check if user is verified (optional - can be disabled for MVP)
-    # if not user.is_verified:
-    #     raise HTTPException(
-    #         status_code=status.HTTP_403_FORBIDDEN,
-    #         detail="Email not verified. Please check your email."
-    #     )
-    
     token_response = await auth_service.create_token_response(user)
     return token_response
 
 
+# Verify user email address with token
 @router.post("/verify-email", status_code=status.HTTP_200_OK)
 async def verify_email(
     verification_data: EmailVerification,
@@ -144,30 +133,26 @@ async def verify_email(
             logger.warning(f"Failed to send welcome email to {user.email}")
     except Exception as email_error:
         logger.error(f"Welcome email error: {str(email_error)}")
-        # Don't fail verification if welcome email fails
     
     return {"message": "Email verified successfully"}
 
 
+# Resend email verification link
 @router.post("/resend-verification", status_code=status.HTTP_200_OK)
 async def resend_verification_email(
-    email_request: PasswordReset,  # Reuse the PasswordReset schema which has email field
+    email_request: PasswordReset,
     db: AsyncSession = Depends(get_db)
 ) -> dict:
     """
     Resend email verification link.
-    
     Always returns success to prevent email enumeration attacks.
     """
     
-    # Find user by email
     result = await db.execute(select(User).where(User.email == email_request.email))
     user = result.scalar_one_or_none()
     
-    # Only send if user exists and is not already verified
     if user and not user.is_verified:
         try:
-            # Generate new verification token
             user = await auth_service.generate_email_verification_token(db, user)
             
             if user and user.email_verification_token:
@@ -189,6 +174,7 @@ async def resend_verification_email(
     }
 
 
+# Request password reset token
 @router.post("/forgot-password", status_code=status.HTTP_200_OK)
 async def forgot_password(
     reset_request: PasswordReset,
@@ -196,15 +182,9 @@ async def forgot_password(
 ) -> dict:
     """
     Request password reset token.
-    
     Always returns success to prevent email enumeration attacks.
     """
-    
-    # Always return success, even if email doesn't exist
-    # This prevents email enumeration attacks
     user = await auth_service.request_password_reset(db, reset_request.email)
-    
-    # Send password reset email only if user exists
     if user and user.password_reset_token:
         try:
             user_name = f"{user.first_name or ''} {user.last_name or ''}".strip() or user.email
@@ -219,13 +199,13 @@ async def forgot_password(
                 logger.warning(f"Failed to send password reset email to {user.email}")
         except Exception as email_error:
             logger.error(f"Password reset email error: {str(email_error)}")
-            # Don't reveal the error to prevent enumeration
     
     return {
         "message": "If the email exists, a password reset link has been sent"
     }
 
 
+# Reset password with token
 @router.post("/reset-password", status_code=status.HTTP_200_OK)
 async def reset_password(
     reset_data: PasswordResetConfirm,
@@ -247,7 +227,40 @@ async def reset_password(
     
     return {"message": "Password reset successfully"}
 
+# Change password for authenticated user
+@router.post("/change-password", status_code=status.HTTP_200_OK)
+async def change_password(
+    password_data: PasswordChange,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db)
+) -> dict:
+    """
+    Change password for authenticated user.
+    Requires current password verification for security.
+    Prevents same password from being used again.
+    """
 
+    if auth_service.verify_password(password_data.new_password, current_user.password_hash):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="New password must be different from current password"
+        )
+
+    success = await auth_service.change_password(
+        db, current_user, password_data.current_password, password_data.new_password
+    )
+
+    if not success:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Current password is incorrect"
+        )
+
+    logger.info(f"Password changed successfully for user {current_user.email}")
+
+    return {"message": "Password changed successfully"}
+
+# Get current authenticated user information
 @router.get("/me", response_model=UserResponse)
 async def get_current_user_info(
     current_user: User = Depends(get_current_active_user)
@@ -270,41 +283,3 @@ async def get_current_user_info(
         created_at=current_user.created_at,
         updated_at=current_user.updated_at
     )
-
-
-@router.post("/change-password", status_code=status.HTTP_200_OK)
-async def change_password(
-    password_data: PasswordChange,
-    current_user: User = Depends(get_current_active_user),
-    db: AsyncSession = Depends(get_db)
-) -> dict:
-    """
-    Change password for authenticated user.
-
-    Requires current password verification for security.
-    Prevents same password from being used again.
-    """
-
-    # Check if new password is same as current password
-    if auth_service.verify_password(password_data.new_password, current_user.password_hash):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="New password must be different from current password"
-        )
-
-    # Change password (verifies current password internally)
-    success = await auth_service.change_password(
-        db, current_user, password_data.current_password, password_data.new_password
-    )
-
-    if not success:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Current password is incorrect"
-        )
-
-    logger.info(f"Password changed successfully for user {current_user.email}")
-
-    return {"message": "Password changed successfully"}
-
-

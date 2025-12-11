@@ -68,7 +68,6 @@ async def get_session_responses(
                     "id": r.item.id,
                     "title": r.item.title,
                     "definition": r.item.definition,
-                    "key_behavior": r.item.key_behavior,
                     "key_mindset": r.item.key_mindset,
                     "category": {
                         "id": r.item.category.id,

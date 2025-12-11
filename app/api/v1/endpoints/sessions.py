@@ -2,14 +2,15 @@
 Session API endpoints
 """
 import logging
-from fastapi import APIRouter, Depends, HTTPException, status
+from datetime import datetime
+from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
-from typing import List
 
 from app.db.session import get_db
 from app.models import Session, User
 from app.models.session import SessionStatus
+from app.models.scoring import ScoringResult, RiskBand
 from app.schemas.session import (
     SessionCreate,
     SessionUpdate,
@@ -25,6 +26,210 @@ from app.api.dependencies import (
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+
+async def generate_coaching_in_background(session_id: int, total_score: float, risk_band: RiskBand):
+    """
+    Background task to generate coaching feedback and report after checklist submission.
+    """
+    from app.db.session import get_db_session
+    from app.models.scoring import CoachingFeedback
+    from app.models.report import Report
+    from app.models.checklist import ChecklistItem
+    from app.services.coaching_service import get_coaching_service
+    from app.services.report_service import get_report_service
+    from sqlalchemy.orm import selectinload
+
+    try:
+        logger.info(f"Starting background coaching and report generation for session {session_id}")
+
+        async with get_db_session() as db:
+            # Get session
+            session_result = await db.execute(
+                select(Session).where(Session.id == session_id)
+            )
+            session = session_result.scalar_one_or_none()
+
+            if not session:
+                logger.error(f"Session {session_id} not found for coaching generation")
+                return
+
+            # Check if coaching already exists
+            existing_result = await db.execute(
+                select(CoachingFeedback).where(CoachingFeedback.session_id == session_id)
+            )
+            existing = existing_result.scalar_one_or_none()
+
+            if existing:
+                logger.info(f"Coaching already exists for session {session_id}, skipping coaching generation")
+            else:
+                # Get scoring result
+                scoring_result = await db.execute(
+                    select(ScoringResult).where(ScoringResult.session_id == session_id)
+                )
+                scoring = scoring_result.scalar_one_or_none()
+
+                if not scoring:
+                    logger.error(f"No scoring result found for session {session_id}")
+                    return
+
+                # Generate coaching feedback
+                coaching_service = get_coaching_service()
+
+                feedback_data = await coaching_service.generate_coaching_feedback(
+                    session_id=session_id,
+                    score=scoring.total_score,
+                    risk_band=risk_band.value if hasattr(risk_band, 'value') else risk_band,
+                    strengths=scoring.top_strengths or [],
+                    gaps=scoring.top_gaps or [],
+                    category_scores=scoring.category_scores or {},
+                    customer_name=session.customer_name,
+                    opportunity_name=session.opportunity_name or ""
+                )
+
+                # Generate audio (optional, can be disabled for faster response)
+                audio_data = None
+                try:
+                    if feedback_data.get('feedback_text'):
+                        audio_data = await coaching_service.generate_coaching_audio(
+                            feedback_text=feedback_data['feedback_text'],
+                            session_id=session_id,
+                            user_id=session.user_id
+                        )
+                except Exception as audio_error:
+                    logger.warning(f"Failed to generate audio for session {session_id}: {audio_error}")
+                    # Continue without audio
+
+                # Save coaching to database
+                coaching_feedback = CoachingFeedback(
+                    session_id=session_id,
+                    feedback_text=feedback_data['feedback_text'],
+                    strengths=feedback_data.get('strengths'),
+                    improvement_areas=feedback_data.get('improvement_areas'),
+                    action_items=feedback_data.get('action_items'),
+                    audio_s3_bucket=audio_data.get('s3_bucket') if audio_data else None,
+                    audio_s3_key=audio_data.get('s3_key') if audio_data else audio_data.get('audio_url') if audio_data else None,
+                    audio_duration=audio_data.get('duration_seconds') if audio_data else None,
+                    generated_at=datetime.utcnow()
+                )
+
+                db.add(coaching_feedback)
+                await db.commit()
+                await db.refresh(coaching_feedback)
+
+                logger.info(f"Coaching feedback generated successfully for session {session_id}")
+
+            # Now generate report with all data (coaching + scoring + responses)
+            logger.info(f"Starting report generation for session {session_id}")
+
+            # Check if report already exists
+            report_result = await db.execute(
+                select(Report).where(Report.session_id == session_id)
+            )
+            existing_report = report_result.scalar_one_or_none()
+
+            if existing_report and existing_report.is_generated:
+                logger.info(f"Report already exists for session {session_id}, skipping report generation")
+                return
+
+            # Get all necessary data for report
+            scoring_result = await db.execute(
+                select(ScoringResult).where(ScoringResult.session_id == session_id)
+            )
+            scoring = scoring_result.scalar_one_or_none()
+
+            coaching_result = await db.execute(
+                select(CoachingFeedback).where(CoachingFeedback.session_id == session_id)
+            )
+            coaching = coaching_result.scalar_one_or_none()
+
+            # Get checklist responses
+            from app.models.session import SessionResponse
+            from app.models.checklist import CoachingQuestion
+            responses_result = await db.execute(
+                select(SessionResponse)
+                .where(SessionResponse.session_id == session_id)
+                .options(
+                    selectinload(SessionResponse.item).selectinload(ChecklistItem.category),
+                    selectinload(SessionResponse.item).selectinload(ChecklistItem.coaching_questions)
+                )
+                .order_by(SessionResponse.item_id)
+            )
+            responses = responses_result.scalars().all()
+
+            # Prepare report data
+            session_data = {
+                "customer_name": session.customer_name,
+                "opportunity_name": session.opportunity_name,
+                "deal_stage": session.deal_stage,
+                "created_at": session.created_at
+            }
+
+            scoring_data = {
+                "total_score": scoring.total_score,
+                "risk_band": scoring.risk_band.value if hasattr(scoring.risk_band, 'value') else scoring.risk_band,
+                "category_scores": scoring.category_scores,
+                "top_strengths": scoring.top_strengths,
+                "top_gaps": scoring.top_gaps,
+                "items_validated": scoring.items_validated,
+                "items_total": scoring.items_total
+            } if scoring else None
+
+            coaching_data = {
+                "feedback_text": coaching.feedback_text,
+                "strengths": coaching.strengths,
+                "improvement_areas": coaching.improvement_areas,
+                "action_items": coaching.action_items
+            } if coaching else None
+
+            responses_data = []
+            for resp in responses:
+                responses_data.append({
+                    "id": resp.id,
+                    "item_id": resp.item_id,
+                    "ai_reasoning": resp.ai_reasoning,
+                    "item": {
+                        "id": resp.item_id,
+                        "coaching_questions": resp.item.coaching_questions,
+                        "definition": resp.item.definition
+                    }
+                })
+
+            # Generate PDF report
+            report_service = get_report_service()
+            pdf_result = await report_service.generate_session_report(
+                session_id=session_id,
+                user_id=session.user_id,
+                session_data=session_data,
+                scoring_data=scoring_data,
+                coaching_data=coaching_data,
+                responses_data=responses_data
+            )
+
+            # Save or update report record
+            if existing_report:
+                existing_report.pdf_s3_bucket = pdf_result.get('s3_bucket')
+                existing_report.pdf_s3_key = pdf_result.get('pdf_url')
+                existing_report.pdf_file_size = pdf_result.get('file_size')
+                existing_report.generated_at = datetime.utcnow()
+                existing_report.is_generated = True
+            else:
+                report = Report(
+                    session_id=session_id,
+                    pdf_s3_bucket=pdf_result.get('s3_bucket'),
+                    pdf_s3_key=pdf_result.get('pdf_url'),
+                    pdf_file_size=pdf_result.get('file_size'),
+                    generated_at=datetime.utcnow(),
+                    is_generated=True
+                )
+                db.add(report)
+
+            await db.commit()
+
+            logger.info(f"Report generated successfully for session {session_id}")
+
+    except Exception as e:
+        logger.error(f"Error in background coaching/report generation for session {session_id}: {str(e)}", exc_info=True)
 
 
 @router.post("/", response_model=SessionResponse, status_code=status.HTTP_201_CREATED)
@@ -325,7 +530,6 @@ async def get_checklist_for_review(
             id=response.item.id,
             title=response.item.title,
             definition=response.item.definition,
-            key_behavior=response.item.key_behavior,
             order=response.item.order
         )
 
@@ -438,6 +642,7 @@ async def update_checklist_item(
 @router.post("/{session_id}/checklist/submit", response_model=ChecklistSubmitResponse)
 async def submit_checklist(
     session_id: int,
+    background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
@@ -501,14 +706,57 @@ async def submit_checklist(
         else:
             items_no += 1
 
+    # Determine risk band based on score
+    if total_score >= 80:
+        risk_band = RiskBand.GREEN
+    elif total_score >= 60:
+        risk_band = RiskBand.YELLOW
+    else:
+        risk_band = RiskBand.RED
+
+    # Create or update ScoringResult
+    scoring_result_query = await db.execute(
+        select(ScoringResult).where(ScoringResult.session_id == session_id)
+    )
+    scoring_result = scoring_result_query.scalar_one_or_none()
+
+    if scoring_result:
+        # Update existing
+        scoring_result.total_score = total_score
+        scoring_result.risk_band = risk_band
+        scoring_result.items_validated = items_yes
+        scoring_result.items_total = len(responses)
+    else:
+        # Create new
+        scoring_result = ScoringResult(
+            session_id=session_id,
+            total_score=total_score,
+            risk_band=risk_band,
+            items_validated=items_yes,
+            items_total=len(responses),
+            category_scores={},  # Can be enhanced later
+            top_strengths=[],  # Can be enhanced later
+            top_gaps=[]  # Can be enhanced later
+        )
+        db.add(scoring_result)
+
     # Update session status
-    session.status = SessionStatus.SUBMITTED
+    session.status = SessionStatus.COMPLETED
     session.submitted_at = datetime.utcnow()
 
     await db.commit()
 
     logger.info(f"Checklist submitted for session {session_id}")
     logger.info(f"Final score: {total_score}/100 ({items_yes} YES, {items_no} NO)")
+    logger.info(f"Risk band: {risk_band.value}")
+
+    # Trigger coaching generation in background
+    background_tasks.add_task(
+        generate_coaching_in_background,
+        session_id=session_id,
+        total_score=total_score,
+        risk_band=risk_band
+    )
 
     return ChecklistSubmitResponse(
         session_id=session_id,

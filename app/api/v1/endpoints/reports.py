@@ -384,18 +384,18 @@ async def email_report(
         user_name = f"{user.first_name or ''} {user.last_name or ''}".strip() or user.email
 
         message = f"""
-Your Sales Checklist report for "{session.customer_name}" is ready!
+Your The Sales Checklist report for "{session.customer_name}" is ready!
 
 Customer: {session.customer_name}
 Opportunity: {session.opportunity_name or 'N/A'}
 Generated: {report.generated_at.strftime('%Y-%m-%d %H:%M') if report.generated_at else 'N/A'}
 
-You can download your report from the Sales Checklist dashboard.
+You can download your report from The Sales Checklist dashboard.
 """
 
         email_sent = email_service.send_notification_email(
             to_emails=[to_email],
-            subject=f"Sales Checklist Report - {session.customer_name}",
+            subject=f"The Sales Checklist Report - {session.customer_name}",
             message=message,
             user_name=user_name
         )

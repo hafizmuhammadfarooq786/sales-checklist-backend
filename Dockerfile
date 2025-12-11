@@ -1,4 +1,4 @@
-# Sales Checklist™ Backend - Production Dockerfile
+# The Sales Checklist™ Backend - Production Dockerfile
 FROM python:3.11-slim
 
 # Set environment variables for production

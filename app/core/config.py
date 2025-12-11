@@ -1,5 +1,5 @@
 """
-Configuration settings for the Sales Checklist API
+Configuration settings for The Sales Checklist™ API
 """
 from typing import List
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -16,13 +16,13 @@ class Settings(BaseSettings):
     )
 
     # App
-    PROJECT_NAME: str = "Sales Checklist™ API"
+    PROJECT_NAME: str = "The Sales Checklist™ API"
     API_V1_STR: str = "/api/v1"
     ENVIRONMENT: str = Field(default="development")
     DEBUG: bool = Field(default=False)
 
     # Security & JWT Authentication
-    SECRET_KEY: str = Field(default="your-secret-key-change-in-production-make-it-very-long-and-random")
+    SECRET_KEY: str = Field(default="d074749f546b8591db9a9b51798a373bedbce66b8e8e6dbc0e9dce48a167e8bf")
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 7  # 7 days
     
@@ -35,7 +35,7 @@ class Settings(BaseSettings):
 
     # Database
     DATABASE_URL: str = Field(
-        default="postgresql+asyncpg://username:password@localhost:5432/sales_checklist",
+        default="postgresql+asyncpg://neondb_owner:npg_cnFle7kXxLd0@ep-lucky-breeze-a4i6m6jo-pooler.us-east-1.aws.neon.tech/neondb?ssl=require",
         description="Database connection URL - should be set via environment variable"
     )
     DB_ECHO: bool = Field(default=False)
@@ -44,7 +44,7 @@ class Settings(BaseSettings):
     REDIS_URL: str = Field(default="redis://localhost:6379/0")
 
     # AWS
-    AWS_REGION: str = Field(default="us-east-1")
+    AWS_REGION: str = Field(default="us-east-2")
     AWS_ACCESS_KEY_ID: str = Field(default="")
     AWS_SECRET_ACCESS_KEY: str = Field(default="")
     AWS_S3_BUCKET_NAME: str = Field(default="sales-checklist")
@@ -67,11 +67,7 @@ class Settings(BaseSettings):
 
     # CORS
     ALLOWED_ORIGINS: List[str] = Field(
-        default=[
-            "http://localhost:3000",
-            "http://localhost:3001",
-            "https://*.vercel.app",
-        ]
+        default=["http://localhost:3000"]
     )
 
     # Rate Limiting
@@ -84,7 +80,7 @@ class Settings(BaseSettings):
     SENTRY_DSN: str = Field(default="")
 
     # Email (Amazon SES)
-    SES_REGION: str = Field(default="us-east-1")
+    SES_REGION: str = Field(default="us-east-2")
     SES_SENDER_EMAIL: str = Field(default="")
 
     # Salesforce

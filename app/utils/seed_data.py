@@ -209,7 +209,7 @@ async def seed_sample_items(db: AsyncSession, categories: dict):
 async def main():
     """Main seed function"""
     print("\\n" + "=" * 60)
-    print("🌱 SEEDING DATABASE: Sales Checklist™")
+    print("🌱 SEEDING DATABASE: The Sales Checklist™")
     print("=" * 60)
 
     async with AsyncSessionLocal() as db:
