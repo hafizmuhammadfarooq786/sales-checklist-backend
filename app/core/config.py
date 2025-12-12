@@ -50,7 +50,6 @@ class Settings(BaseSettings):
     AWS_S3_BUCKET_NAME: str = Field(default="sales-checklist")
     S3_BUCKET_AUDIO: str = Field(default="sales-checklist-audio")
     S3_BUCKET_REPORTS: str = Field(default="sales-checklist-reports")
-    S3_BUCKET_BACKUPS: str = Field(default="sales-checklist-backups")
 
     # OpenAI
     OPENAI_API_KEY: str = Field(default="")
