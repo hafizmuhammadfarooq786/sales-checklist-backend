@@ -209,7 +209,7 @@ async def generate_coaching_in_background(session_id: int, total_score: float, r
             # Save or update report record
             if existing_report:
                 existing_report.pdf_s3_bucket = pdf_result.get('s3_bucket')
-                existing_report.pdf_s3_key = pdf_result.get('pdf_url')
+                existing_report.pdf_s3_key = pdf_result.get('s3_key') if pdf_result.get('s3_key') else pdf_result.get('pdf_url')
                 existing_report.pdf_file_size = pdf_result.get('file_size')
                 existing_report.generated_at = datetime.utcnow()
                 existing_report.is_generated = True
@@ -217,7 +217,7 @@ async def generate_coaching_in_background(session_id: int, total_score: float, r
                 report = Report(
                     session_id=session_id,
                     pdf_s3_bucket=pdf_result.get('s3_bucket'),
-                    pdf_s3_key=pdf_result.get('pdf_url'),
+                    pdf_s3_key=pdf_result.get('s3_key') if pdf_result.get('s3_key') else pdf_result.get('pdf_url'),
                     pdf_file_size=pdf_result.get('file_size'),
                     generated_at=datetime.utcnow(),
                     is_generated=True

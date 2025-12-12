@@ -3,7 +3,7 @@ OpenAI Transcription Service
 """
 import openai
 from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Union, BinaryIO
 import json
 
 from app.core.config import settings
@@ -20,32 +20,59 @@ class TranscriptionService:
         openai.api_key = settings.OPENAI_API_KEY
         self.client = openai.OpenAI(api_key=settings.OPENAI_API_KEY)
 
-    async def transcribe_audio(self, file_path: str, session_id: int) -> Dict[str, Any]:
+    async def transcribe_audio(
+        self,
+        file_source: Union[str, BinaryIO],
+        session_id: int,
+        filename: Optional[str] = None
+    ) -> Dict[str, Any]:
         """
         Transcribe audio file using OpenAI Whisper
-        
+
         Args:
-            file_path: Path to the audio file
+            file_source: Either a file path (str) or file-like object (BytesIO)
             session_id: Session ID for tracking
-            
+            filename: Original filename (required when using BytesIO)
+
         Returns:
             Dict containing transcription results
         """
         try:
-            # Verify file exists
-            audio_file_path = Path(file_path)
-            if not audio_file_path.exists():
-                raise FileNotFoundError(f"Audio file not found: {file_path}")
+            # Handle file path (local files)
+            if isinstance(file_source, str):
+                audio_file_path = Path(file_source)
+                if not audio_file_path.exists():
+                    raise FileNotFoundError(f"Audio file not found: {file_source}")
 
-            print(f"🎙️ Starting transcription for session {session_id}")
-            print(f"📁 File: {audio_file_path.name} ({audio_file_path.stat().st_size} bytes)")
+                print(f"🎙️ Starting transcription for session {session_id}")
+                print(f"📁 File: {audio_file_path.name} ({audio_file_path.stat().st_size} bytes)")
 
-            # Open and transcribe the audio file
-            with open(audio_file_path, "rb") as audio_file:
+                # Open and transcribe the audio file
+                with open(audio_file_path, "rb") as audio_file:
+                    transcript = self.client.audio.transcriptions.create(
+                        model=settings.OPENAI_MODEL_WHISPER,
+                        file=audio_file,
+                        response_format="verbose_json",
+                        language="en"
+                    )
+
+            # Handle BytesIO (streaming from S3)
+            else:
+                if not filename:
+                    raise ValueError("filename is required when using BytesIO")
+
+                file_size = file_source.seek(0, 2)  # Seek to end to get size
+                file_source.seek(0)  # Reset to beginning
+
+                print(f"🎙️ Starting transcription for session {session_id}")
+                print(f"📁 File: {filename} ({file_size} bytes) [streaming from S3]")
+
+                # Transcribe directly from BytesIO
+                # OpenAI requires a tuple (filename, file_object) for BytesIO
                 transcript = self.client.audio.transcriptions.create(
                     model=settings.OPENAI_MODEL_WHISPER,
-                    file=audio_file,
-                    response_format="verbose_json",  # Get detailed info with timestamps
+                    file=(filename, file_source),
+                    response_format="verbose_json",
                     language="en"
                 )
 

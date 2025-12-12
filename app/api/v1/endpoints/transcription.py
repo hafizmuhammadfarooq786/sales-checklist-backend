@@ -137,9 +137,9 @@ async def process_transcription(session_id: int, file_path: str):
     """
     Background task to process transcription
 
-    New workflow:
-    1. Check if file is on S3 and generate pre-signed URL if needed
-    2. Download S3 file to temporary location if needed
+    Optimized workflow:
+    1. Check if file is on S3, stream directly to memory (BytesIO)
+    2. For local files, use file path directly
     3. Transcribe audio using Whisper API
     4. Save transcript to database
     5. Analyze transcript using ChecklistAnalyzer (GPT-4) to generate Yes/No answers for all 10 items
@@ -149,12 +149,10 @@ async def process_transcription(session_id: int, file_path: str):
     from app.db.session import get_db_session
     from app.services.checklist_analyzer import analyzer
     from app.services.s3_service import get_s3_service
-    import tempfile
+    import boto3
+    from io import BytesIO
     import os
-    import httpx
     from urllib.parse import urlparse
-
-    temp_file_path = None
 
     try:
         logger.info(f"Processing transcription for session {session_id}")
@@ -163,7 +161,7 @@ async def process_transcription(session_id: int, file_path: str):
         is_s3_url = file_path.startswith("https://") and "s3" in file_path and "amazonaws.com" in file_path
 
         if is_s3_url:
-            logger.info(f"File is on S3, generating pre-signed URL and downloading...")
+            logger.info(f"File is on S3, streaming directly to memory...")
 
             # Extract S3 key from URL
             # URL formats:
@@ -181,38 +179,38 @@ async def process_transcription(session_id: int, file_path: str):
 
             logger.info(f"Extracted S3 key: {s3_key}")
 
-            # Generate pre-signed URL (valid for 1 hour)
-            s3_service = get_s3_service()
-            presigned_url = s3_service.generate_presigned_url(s3_key, expiration=3600)
+            # Stream file directly from S3 to memory (BytesIO)
+            s3_client = boto3.client(
+                "s3",
+                aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
+                aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
+                region_name=settings.AWS_REGION,
+            )
 
-            if not presigned_url:
-                raise Exception(f"Failed to generate pre-signed URL for S3 key: {s3_key}")
+            file_buffer = BytesIO()
+            s3_client.download_fileobj(settings.AWS_S3_BUCKET_NAME, s3_key, file_buffer)
+            file_buffer.seek(0)  # Reset to beginning
 
-            logger.info(f"Pre-signed URL generated successfully")
+            file_size = file_buffer.seek(0, 2)
+            file_buffer.seek(0)
 
-            # Download file to temporary location
-            async with httpx.AsyncClient(timeout=300.0) as client:
-                response = await client.get(presigned_url)
-                response.raise_for_status()
+            logger.info(f"Streamed S3 file to memory: {file_size} bytes")
 
-                # Create temporary file with appropriate extension
-                file_extension = os.path.splitext(s3_key)[1] or '.webm'
-                with tempfile.NamedTemporaryFile(delete=False, suffix=file_extension) as temp_file:
-                    temp_file.write(response.content)
-                    temp_file_path = temp_file.name
+            # Extract filename from S3 key
+            filename = os.path.basename(s3_key)
 
-                logger.info(f"Downloaded S3 file to temporary location: {temp_file_path}")
-                logger.info(f"File size: {len(response.content)} bytes")
-
-            # Use temporary file for transcription
-            transcription_file_path = temp_file_path
+            # Transcribe audio from BytesIO
+            transcript_data = await transcription_service.transcribe_audio(
+                file_buffer,
+                session_id,
+                filename=filename
+            )
         else:
             # Local file, use as-is
             logger.info(f"File is local: {file_path}")
-            transcription_file_path = file_path
 
-        # Transcribe audio
-        transcript_data = await transcription_service.transcribe_audio(transcription_file_path, session_id)
+            # Transcribe audio from file path
+            transcript_data = await transcription_service.transcribe_audio(file_path, session_id)
 
         # Save transcript
         transcript = Transcript(
@@ -285,12 +283,3 @@ async def process_transcription(session_id: int, file_path: str):
                 await db.commit()
         except Exception as commit_error:
             logger.error(f"Failed to update session status: {str(commit_error)}", exc_info=True)
-
-    finally:
-        # Clean up temporary file if it was created
-        if temp_file_path and os.path.exists(temp_file_path):
-            try:
-                os.unlink(temp_file_path)
-                logger.info(f"Cleaned up temporary file: {temp_file_path}")
-            except Exception as cleanup_error:
-                logger.warning(f"Failed to delete temporary file {temp_file_path}: {str(cleanup_error)}")

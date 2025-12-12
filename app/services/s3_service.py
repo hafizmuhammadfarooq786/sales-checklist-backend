@@ -143,6 +143,7 @@ class S3Service:
         self,
         s3_key: str,
         expiration: int = 3600,
+        bucket_name: Optional[str] = None,
     ) -> Optional[str]:
         """
         Generate a presigned URL for temporary access to a file
@@ -150,14 +151,18 @@ class S3Service:
         Args:
             s3_key: S3 object key
             expiration: URL expiration time in seconds (default 1 hour)
+            bucket_name: Optional bucket name (uses default if not provided)
 
         Returns:
             Presigned URL or None if failed
         """
         try:
+            # Use provided bucket or default
+            target_bucket = bucket_name or self.bucket_name
+
             url = self.s3_client.generate_presigned_url(
                 "get_object",
-                Params={"Bucket": self.bucket_name, "Key": s3_key},
+                Params={"Bucket": target_bucket, "Key": s3_key},
                 ExpiresIn=expiration,
             )
             return url

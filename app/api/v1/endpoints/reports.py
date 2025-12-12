@@ -25,6 +25,57 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
+def get_report_url(report: Report, request=None) -> Optional[str]:
+    """
+    Generate a presigned URL or accessible URL for report PDF.
+
+    Args:
+        report: Report instance
+        request: Optional FastAPI Request object to get base URL
+
+    Returns:
+        URL string if PDF exists, None otherwise
+    """
+    if not report.pdf_s3_key:
+        return None
+
+    from app.services.s3_service import get_s3_service
+    from app.core.config import settings
+
+    # If PDF is stored in S3, generate presigned URL
+    if report.pdf_s3_bucket:
+        try:
+            s3_service = get_s3_service()
+            presigned_url = s3_service.generate_presigned_url(
+                report.pdf_s3_key,
+                expiration=3600,  # 1 hour
+                bucket_name=report.pdf_s3_bucket  # Pass the correct bucket
+            )
+            if presigned_url:
+                return presigned_url
+        except Exception as e:
+            logger.warning(f"Failed to generate presigned URL for report: {e}")
+
+    # For local storage, construct full URL
+    # Try to get base URL from request if available
+    base_url = "http://localhost:8000"  # Default fallback
+    if request:
+        base_url = str(request.base_url).rstrip("/")
+    elif hasattr(settings, "API_BASE_URL") and settings.API_BASE_URL:
+        base_url = settings.API_BASE_URL.rstrip("/")
+
+    # Construct the full URL for local files
+    pdf_path = report.pdf_s3_key
+    if not pdf_path.startswith("http"):
+        # Remove leading slash if present
+        if pdf_path.startswith("/"):
+            pdf_path = pdf_path[1:]
+        # Construct full URL
+        return f"{base_url}/api/v1/uploads/{pdf_path}"
+
+    return pdf_path
+
+
 @router.post("/{session_id}/report", status_code=status.HTTP_201_CREATED)
 async def generate_report(
     session_id: int,
@@ -209,12 +260,13 @@ async def get_report(
     session_id: int,
     user_id: int = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db),
+    request: Optional[object] = None,
 ):
     """
     Get report metadata for a session.
 
     Returns:
-        Report metadata with download URL
+        Report metadata with download URL (pre-signed if S3)
     """
     # Verify session belongs to user
     session_result = await db.execute(
@@ -243,10 +295,13 @@ async def get_report(
             detail="Report not found. Use POST to generate."
         )
 
+    # Generate presigned URL for PDF
+    pdf_url = get_report_url(report, request)
+
     return {
         "session_id": session_id,
         "report_id": report.id,
-        "pdf_url": report.pdf_s3_key,
+        "pdf_url": pdf_url,
         "file_size": report.pdf_file_size,
         "generated_at": report.generated_at,
         "emailed_at": report.emailed_at,
@@ -261,10 +316,10 @@ async def download_report(
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Download the PDF report file.
+    Get the download URL for the PDF report.
 
     Returns:
-        PDF file as downloadable response
+        JSON with download_url (pre-signed for S3, direct for local files)
     """
     # Verify session belongs to user
     session_result = await db.execute(
@@ -293,29 +348,21 @@ async def download_report(
             detail="Report not found"
         )
 
-    pdf_path = report.pdf_s3_key
+    # Generate download URL (pre-signed for S3, local URL for files)
+    download_url = get_report_url(report)
 
-    # Check if it's a local file
-    if pdf_path and os.path.exists(pdf_path):
-        return FileResponse(
-            path=pdf_path,
-            filename=f"sales_checklist_report_{session_id}.pdf",
-            media_type="application/pdf"
-        )
-
-    # If S3, redirect or fetch
-    if report.pdf_s3_bucket:
-        # For S3 files, you might want to generate a presigned URL
-        # For now, return the URL
+    if not download_url:
         raise HTTPException(
-            status_code=status.HTTP_302_FOUND,
-            headers={"Location": pdf_path}
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to generate download URL"
         )
 
-    raise HTTPException(
-        status_code=status.HTTP_404_NOT_FOUND,
-        detail="PDF file not found"
-    )
+    return {
+        "session_id": session_id,
+        "download_url": download_url,
+        "file_size": report.pdf_file_size,
+        "filename": f"sales_checklist_report_{session_id}.pdf"
+    }
 
 
 @router.post("/{session_id}/report/email")

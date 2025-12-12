@@ -23,27 +23,28 @@ logger = logging.getLogger(__name__)
 def get_audio_url(coaching: CoachingFeedback, request=None) -> Optional[str]:
     """
     Generate a presigned URL or accessible URL for coaching audio.
-    
+
     Args:
         coaching: CoachingFeedback instance
         request: Optional FastAPI Request object to get base URL
-    
+
     Returns:
         URL string if audio exists, None otherwise
     """
     if not coaching.audio_s3_key:
         return None
-    
+
     from app.services.s3_service import get_s3_service
     from app.core.config import settings
-    
+
     # If audio is stored in S3, generate presigned URL
     if coaching.audio_s3_bucket:
         try:
             s3_service = get_s3_service()
             presigned_url = s3_service.generate_presigned_url(
                 coaching.audio_s3_key,
-                expiration=3600  # 1 hour
+                expiration=3600,  # 1 hour
+                bucket_name=coaching.audio_s3_bucket  # Pass the correct bucket
             )
             if presigned_url:
                 return presigned_url
