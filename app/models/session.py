@@ -16,6 +16,7 @@ class SessionStatus(str, enum.Enum):
     ANALYZING = "analyzing"  # AI mapping to checklist
     SCORING = "scoring"  # Calculating scores
     PENDING_REVIEW = "pending_review"  # Ready for user review
+    SUBMITTED = "submitted"  # Checklist submitted, processing coaching
     COMPLETED = "completed"  # All done
     FAILED = "failed"  # Error occurred
 

@@ -75,6 +75,15 @@ class Settings(BaseSettings):
     # File Upload
     MAX_UPLOAD_SIZE: int = Field(default=524288000)  # 500MB
 
+    # Audio Upload Settings (aligned with OpenAI Whisper limits)
+    MAX_AUDIO_FILE_SIZE_MB: int = Field(default=25, description="Maximum audio file size in MB (OpenAI Whisper limit)")
+    AUDIO_CHUNK_SIZE_MB: int = Field(default=5, description="Chunk size for resumable uploads")
+    AUDIO_UPLOAD_TIMEOUT_SECONDS: int = Field(default=300, description="Upload timeout in seconds (5 minutes)")
+
+    # Audio Compression Recommendations (for frontend documentation)
+    RECOMMENDED_AUDIO_BITRATE: str = "64k"
+    RECOMMENDED_AUDIO_SAMPLE_RATE: int = 22050
+
     # Sentry
     SENTRY_DSN: str = Field(default="")
 

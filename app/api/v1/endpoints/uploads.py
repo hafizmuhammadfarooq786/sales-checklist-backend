@@ -43,11 +43,27 @@ async def upload_audio_file(
         logger.info(f"File: {audio_file.filename}, Content-Type: {audio_file.content_type}")
         
         # Validate file type
-        if not audio_file.content_type or not audio_file.content_type.startswith("audio/"):
+        valid_audio_types = [
+            "audio/webm",
+            "audio/wav",
+            "audio/mp3",
+            "audio/mpeg",
+            "audio/mp4",
+            "audio/m4a",
+            "audio/ogg",
+            "audio/x-m4a",
+            "audio/x-wav"
+        ]
+
+        if not audio_file.content_type or audio_file.content_type not in valid_audio_types:
             logger.warning(f"Invalid file type: {audio_file.content_type}")
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid file type. Must be an audio file.",
+                status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+                detail={
+                    "error": "INVALID_FILE_TYPE",
+                    "message": f"File type '{audio_file.content_type}' is not supported. Please upload an audio file.",
+                    "supported_types": valid_audio_types
+                }
             )
 
         # Get session
@@ -126,8 +142,22 @@ async def upload_audio_file(
             content = await audio_file.read()
             if not content:
                 raise ValueError("Uploaded file is empty")
-            
+
             logger.info(f"Read {len(content)} bytes from uploaded file")
+
+            # Validate file size (OpenAI Whisper limit: 25 MB)
+            max_size_bytes = settings.MAX_AUDIO_FILE_SIZE_MB * 1024 * 1024
+            if len(content) > max_size_bytes:
+                file_size_mb = len(content) / 1024 / 1024
+                raise HTTPException(
+                    status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                    detail={
+                        "error": "FILE_TOO_LARGE",
+                        "message": f"File size ({file_size_mb:.2f} MB) exceeds maximum allowed size ({settings.MAX_AUDIO_FILE_SIZE_MB} MB). Please compress the audio file or use a shorter recording.",
+                        "max_size_mb": settings.MAX_AUDIO_FILE_SIZE_MB,
+                        "file_size_mb": round(file_size_mb, 2)
+                    }
+                )
             
             # Write to temporary file
             with tempfile.NamedTemporaryFile(delete=False, suffix=file_extension) as temp_file:

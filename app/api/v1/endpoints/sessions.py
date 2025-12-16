@@ -741,7 +741,7 @@ async def submit_checklist(
         db.add(scoring_result)
 
     # Update session status
-    session.status = SessionStatus.COMPLETED
+    session.status = SessionStatus.SUBMITTED
     session.submitted_at = datetime.utcnow()
 
     await db.commit()
