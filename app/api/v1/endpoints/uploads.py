@@ -2,7 +2,7 @@
 Audio file upload endpoints
 """
 import logging
-from fastapi import APIRouter, Depends, HTTPException, status, File, UploadFile, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, status, File, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 import shutil
@@ -25,7 +25,6 @@ logger = logging.getLogger(__name__)
 async def upload_audio_file(
     session_id: int,
     audio_file: UploadFile,
-    background_tasks: BackgroundTasks,
     user_id: int = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db),
 ):
@@ -94,20 +93,16 @@ async def upload_audio_file(
             # Return existing audio file info
             logger.info(f"Audio file already exists for session {session_id}")
 
-            # Check if transcription has been done, if not, trigger it
+            # Check if transcription has been done
             from app.models.session import Transcript
             transcript_result = await db.execute(
                 select(Transcript).where(Transcript.session_id == session_id)
             )
             transcript = transcript_result.scalar_one_or_none()
 
-            # Trigger transcription if it hasn't been done yet
+            # Note: Audio exists but transcription should be triggered via separate endpoint if needed
             if not transcript:
-                from app.api.v1.endpoints.transcription import process_transcription
-                background_tasks.add_task(process_transcription, session_id, existing_audio.file_path)
-                logger.info(f"Audio exists but no transcript found. Background transcription task queued for session {session_id}")
-                session.status = SessionStatus.ANALYZING
-                await db.commit()
+                logger.info(f"Audio exists but no transcript found for session {session_id}. Use POST /api/v1/sessions/{session_id}/transcribe to start transcription.")
 
             return {
                 "id": existing_audio.id,
@@ -260,21 +255,136 @@ async def upload_audio_file(
         logger.info(f"Audio file uploaded successfully for session {session_id}: {unique_filename}")
         logger.info(f"Session {session_id} status updated to ANALYZING")
 
-        # Automatically trigger transcription and checklist generation in background
-        from app.api.v1.endpoints.transcription import process_transcription
-        background_tasks.add_task(process_transcription, session_id, file_path)
-        logger.info(f"Background transcription task queued for session {session_id}")
+        # Synchronously transcribe and analyze (user waits for results)
+        logger.info(f"Starting synchronous transcription and AI analysis for session {session_id}")
 
-        return {
-            "id": audio_file_record.id,
-            "session_id": session_id,
-            "filename": unique_filename,
-            "file_size": file_size,
-            "mime_type": audio_file.content_type,
-            "storage_type": storage_type,
-            "file_path": file_path if storage_type == "s3" else None,  # Only expose S3 URLs
-            "message": f"Audio file uploaded successfully to {storage_type}. Transcription and AI analysis started automatically in background.",
-        }
+        try:
+            from app.services.transcription_service import transcription_service
+            from app.services.checklist_analyzer import analyzer
+            from app.models.session import Transcript, SessionResponse
+            from app.models.checklist import ChecklistItem
+            from sqlalchemy import delete
+            import boto3
+            from io import BytesIO
+
+            # Step 1: Transcribe audio
+            logger.info(f"📝 Transcribing audio file...")
+
+            # Handle S3 vs local storage
+            if storage_type == "s3":
+                # Stream file from S3 to BytesIO for transcription
+                logger.info(f"Streaming audio from S3 for transcription...")
+                s3_client = boto3.client(
+                    "s3",
+                    aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
+                    aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
+                    region_name=settings.AWS_REGION,
+                )
+
+                file_buffer = BytesIO()
+                s3_client.download_fileobj(settings.AWS_S3_BUCKET_NAME, s3_key, file_buffer)
+                file_buffer.seek(0)
+
+                # Transcribe from BytesIO
+                transcript_data = await transcription_service.transcribe_audio(
+                    file_buffer,
+                    session_id,
+                    filename=unique_filename
+                )
+            else:
+                # Local file, transcribe directly
+                transcript_data = await transcription_service.transcribe_audio(file_path, session_id)
+
+            # Step 2: Save transcript
+            transcript = Transcript(
+                session_id=session_id,
+                text=transcript_data["text"],
+                language=transcript_data.get("language", "en"),
+                duration=transcript_data.get("duration"),
+                words_count=len(transcript_data["text"].split()),
+                processing_time=30.0  # Placeholder
+            )
+            db.add(transcript)
+            await db.commit()
+            await db.refresh(transcript)
+            logger.info(f"✅ Transcript saved ({len(transcript_data['text'])} characters)")
+
+            # Step 3: AI analysis with behavioral framework
+            logger.info(f"🤖 Analyzing transcript with behavioral framework...")
+            analysis_results = await analyzer.analyze_transcript(transcript_data["text"], db, session_id)
+            logger.info(f"✅ AI analysis completed for {len(analysis_results)} items")
+
+            # Step 4: Delete old responses if they exist
+            await db.execute(
+                delete(SessionResponse).where(SessionResponse.session_id == session_id)
+            )
+            await db.commit()
+
+            # Step 5: Create SessionResponse records with per-question evaluations
+            for item_id, result in analysis_results.items():
+                ai_answer = result["answer"]
+                score = 10 if ai_answer else 0
+
+                response = SessionResponse(
+                    session_id=session_id,
+                    item_id=item_id,
+                    ai_answer=ai_answer,
+                    ai_reasoning=result["reasoning"],
+                    user_answer=None,
+                    was_changed=False,
+                    score=score,
+                )
+                db.add(response)
+                await db.flush()
+
+                # Store per-question evaluations
+                question_evals = result.get("question_evaluations", [])
+                if question_evals:
+                    await analyzer.store_question_analyses(
+                        session_response_id=response.id,
+                        item_id=item_id,
+                        question_evaluations=question_evals,
+                        db=db
+                    )
+
+            # Step 6: Update session status
+            session.status = "pending_review"
+            await db.commit()
+
+            logger.info(f"✅ Transcription and AI analysis completed successfully")
+            logger.info(f"📊 Session {session_id} ready for review")
+
+            return {
+                "id": audio_file_record.id,
+                "session_id": session_id,
+                "filename": unique_filename,
+                "file_size": file_size,
+                "mime_type": audio_file.content_type,
+                "storage_type": storage_type,
+                "file_path": file_path if storage_type == "s3" else None,
+                "transcript": {
+                    "text": transcript_data["text"],
+                    "word_count": len(transcript_data["text"].split()),
+                    "duration": transcript_data.get("duration")
+                },
+                "analysis": {
+                    "total_items": len(analysis_results),
+                    "items_validated": sum(1 for r in analysis_results.values() if r["answer"]),
+                },
+                "message": f"Audio uploaded, transcribed, and analyzed successfully! Checklist ready for review.",
+            }
+
+        except Exception as transcription_error:
+            logger.error(f"Transcription/Analysis failed for session {session_id}: {str(transcription_error)}", exc_info=True)
+
+            # Update session to failed status
+            session.status = "failed"
+            await db.commit()
+
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Audio uploaded but transcription failed: {str(transcription_error)}",
+            )
     except HTTPException:
         # Re-raise HTTP exceptions as-is
         raise

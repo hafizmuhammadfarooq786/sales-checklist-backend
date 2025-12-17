@@ -149,9 +149,7 @@ async def generate_coaching_feedback(
             session_id=session_id,
             score=scoring.total_score,
             risk_band=scoring.risk_band.value if hasattr(scoring.risk_band, 'value') else scoring.risk_band,
-            strengths=scoring.top_strengths or [],
-            gaps=scoring.top_gaps or [],
-            category_scores=scoring.category_scores or {},
+            db=db,  # Pass database session for gap data fetching
             customer_name=session.customer_name,
             opportunity_name=session.opportunity_name or ""
         )
@@ -323,9 +321,7 @@ async def regenerate_coaching_feedback(
             session_id=session_id,
             score=scoring.total_score,
             risk_band=scoring.risk_band.value if hasattr(scoring.risk_band, 'value') else scoring.risk_band,
-            strengths=scoring.top_strengths or [],
-            gaps=scoring.top_gaps or [],
-            category_scores=scoring.category_scores or {},
+            db=db,  # Pass database session for gap data fetching
             customer_name=session.customer_name,
             opportunity_name=session.opportunity_name or ""
         )

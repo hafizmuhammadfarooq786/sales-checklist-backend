@@ -2,7 +2,7 @@
 Pydantic schemas for Checklist endpoints
 """
 from pydantic import BaseModel, Field
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 from datetime import datetime
 
 
@@ -158,6 +158,7 @@ class ChecklistSubmitResponse(BaseModel):
     items_yes: int
     items_no: int
     submitted_at: datetime
+    coaching_feedback: Optional[Dict[str, Any]] = None
     message: str
 
     class Config:

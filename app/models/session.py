@@ -16,7 +16,6 @@ class SessionStatus(str, enum.Enum):
     ANALYZING = "analyzing"  # AI mapping to checklist
     SCORING = "scoring"  # Calculating scores
     PENDING_REVIEW = "pending_review"  # Ready for user review
-    SUBMITTED = "submitted"  # Checklist submitted, processing coaching
     COMPLETED = "completed"  # All done
     FAILED = "failed"  # Error occurred
 
@@ -126,3 +125,4 @@ class SessionResponse(Base, TimestampMixin):
     # Relationships
     session = relationship("Session", back_populates="responses")
     item = relationship("ChecklistItem", back_populates="session_responses")
+    question_analyses = relationship("SessionResponseAnalysis", back_populates="session_response", cascade="all, delete-orphan")

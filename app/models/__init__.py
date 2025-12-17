@@ -6,6 +6,7 @@ from app.models.base import Base, TimestampMixin
 # Import all models
 from app.models.user import Organization, Team, User, UserRole
 from app.models.checklist import ChecklistCategory, ChecklistItem, CoachingQuestion
+from app.models.checklist_behaviour import ChecklistItemBehaviour, SessionResponseAnalysis
 from app.models.session import (
     Session,
     SessionStatus,
@@ -27,6 +28,8 @@ __all__ = [
     "ChecklistCategory",
     "ChecklistItem",
     "CoachingQuestion",
+    "ChecklistItemBehaviour",
+    "SessionResponseAnalysis",
     "Session",
     "SessionStatus",
     "AudioFile",

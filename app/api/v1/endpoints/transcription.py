@@ -229,10 +229,10 @@ async def process_transcription(session_id: int, file_path: str):
 
             logger.info(f"Transcript saved ({len(transcript_data['text'])} characters)")
 
-        # Analyze transcript with new ChecklistAnalyzer (10 Yes/No answers)
+        # Analyze transcript with new ChecklistAnalyzer (10 Yes/No answers + per-question evaluations)
         logger.info(f"Analyzing transcript with AI for 10 checklist items...")
         async with get_db_session() as db:
-            analysis_results = await analyzer.analyze_transcript(transcript_data["text"], db)
+            analysis_results = await analyzer.analyze_transcript(transcript_data["text"], db, session_id)
 
             logger.info(f"AI analysis completed for {len(analysis_results)} items")
 
@@ -258,7 +258,20 @@ async def process_transcription(session_id: int, file_path: str):
                     score=score,  # Initial score based on AI answer
                 )
                 db.add(response)
+                await db.flush()  # Flush to get the response ID
+
                 logger.info(f"Item {item_id}: {'YES' if ai_answer else 'NO'} ({score} pts) - {result['reasoning'][:50]}...")
+
+                # Store per-question evaluation results
+                question_evals = result.get("question_evaluations", [])
+                if question_evals:
+                    await analyzer.store_question_analyses(
+                        session_response_id=response.id,
+                        item_id=item_id,
+                        question_evaluations=question_evals,
+                        db=db
+                    )
+                    logger.info(f"  Stored {len(question_evals)} question evaluations for item {item_id}")
 
             # Update session status to pending_review
             # This indicates AI has filled the checklist, now waiting for user review

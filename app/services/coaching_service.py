@@ -1,6 +1,7 @@
 """
 Coaching Feedback Service
 Generates personalized coaching feedback using GPT-4 and audio using ElevenLabs TTS
+Now uses gap-based coaching: focuses only on items scoring 0/10
 """
 import json
 import tempfile
@@ -10,9 +11,15 @@ from typing import Dict, Any, Optional, List
 import openai
 from elevenlabs import ElevenLabs
 from elevenlabs.core import ApiError
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 
 from app.core.config import settings
 from app.services.s3_service import get_s3_service
+from app.models.session import SessionResponse
+from app.models.checklist import ChecklistItem
+from app.models.checklist_behaviour import ChecklistItemBehaviour, SessionResponseAnalysis
 
 
 class CoachingService:
@@ -34,67 +41,180 @@ class CoachingService:
             except Exception as e:
                 print(f"Warning: ElevenLabs initialization failed: {e}")
 
+    async def fetch_gap_data(
+        self,
+        session_id: int,
+        db: AsyncSession
+    ) -> List[Dict[str, Any]]:
+        """
+        Fetch detailed gap analysis for items scoring 0/10.
+        Returns list of gap items with behavioral framework and per-question evaluation.
+
+        Each gap includes:
+        - Item title, definition
+        - Behavior summary
+        - Questions that weren't answered (with evidence status)
+        - Coaching area
+        - Key reminders
+        """
+        # Get all session responses for this session
+        responses_result = await db.execute(
+            select(SessionResponse)
+            .options(selectinload(SessionResponse.item))
+            .options(selectinload(SessionResponse.question_analyses))
+            .where(SessionResponse.session_id == session_id)
+            .where(SessionResponse.score == 0)  # Only items with 0/10
+        )
+        gap_responses = responses_result.scalars().all()
+
+        gap_items = []
+
+        for response in gap_responses:
+            item = response.item
+
+            # Fetch behavioral framework for this item (by ID)
+            framework_result = await db.execute(
+                select(ChecklistItemBehaviour)
+                .where(ChecklistItemBehaviour.checklist_item_id == item.id)
+                .where(ChecklistItemBehaviour.isactive == True)
+                .order_by(ChecklistItemBehaviour.order)
+            )
+            framework_rows = framework_result.scalars().all()
+
+            # Group by row type
+            behavior_summary = next((r.behaviour for r in framework_rows if r.rowtype == 'Behavior'), "")
+            questions = [r for r in framework_rows if r.rowtype == 'Question']
+            key_reminder = next((r.keyreminder for r in framework_rows if r.rowtype == 'Reminder'), "")
+            coaching_area = questions[0].coachingarea if questions else ""
+
+            # Map question analyses
+            question_analyses_map = {qa.behaviour_id: qa for qa in response.question_analyses}
+
+            # Build question list with evidence status
+            question_details = []
+            for q in questions:
+                qa = question_analyses_map.get(q.id)
+                question_details.append({
+                    'order': q.order,
+                    'question': q.question,
+                    'evidence_found': qa.evidence_found if qa else False,
+                    'evidence_text': qa.evidence_text if qa else None,
+                    'reasoning': qa.ai_reasoning if qa else None
+                })
+
+            gap_items.append({
+                'item_title': item.title,
+                'item_definition': item.definition,
+                'behavior_summary': behavior_summary,
+                'coaching_area': coaching_area,
+                'key_reminder': key_reminder,
+                'questions': question_details,
+                'ai_reasoning': response.ai_reasoning
+            })
+
+        return gap_items
+
     async def generate_coaching_feedback(
         self,
         session_id: int,
         score: float,
         risk_band: str,
-        strengths: List[str],
-        gaps: List[str],
-        category_scores: Dict[str, Any],
+        db: AsyncSession,
         customer_name: str = "",
-        opportunity_name: str = ""
+        opportunity_name: str = "",
+        **kwargs  # For backward compatibility with old parameters
     ) -> Dict[str, Any]:
         """
-        Generate personalized coaching feedback using GPT-4
+        Generate gap-based coaching feedback using GPT-4.
+        Now focuses ONLY on items scoring 0/10 (skips items with 10/10).
 
         Args:
             session_id: Session ID for tracking
             score: Overall score (0-100)
             risk_band: Risk band (green/yellow/red)
-            strengths: List of top strengths
-            gaps: List of areas needing improvement
-            category_scores: Detailed category breakdown
+            db: Database session to fetch gap data
             customer_name: Customer name for context
             opportunity_name: Opportunity name for context
 
         Returns:
-            Dict containing feedback_text, strengths, improvement_areas, action_items
+            Dict containing coaching_paragraphs (gap-based coaching by item)
         """
         try:
-            print(f"Generating coaching feedback for session {session_id}")
+            print(f"Generating gap-based coaching feedback for session {session_id}")
 
-            # Build context for GPT-4
-            context = self._build_coaching_context(
-                score, risk_band, strengths, gaps,
-                category_scores, customer_name, opportunity_name
-            )
+            # Fetch gap data (items with 0/10 score)
+            gap_items = await self.fetch_gap_data(session_id, db)
 
-            # Generate coaching feedback
-            prompt = f"""
-You are an expert B2B sales coach providing personalized feedback to a sales representative.
+            if not gap_items:
+                # Perfect score! No gaps to coach on
+                return {
+                    "feedback_text": f"Excellent work! You achieved a perfect score of {score:.0f}/100 on this call. All checklist items were successfully completed. Keep up the great work and continue applying these best practices in your future calls.",
+                    "strengths": [],
+                    "improvement_areas": [],
+                    "action_items": ["Continue applying these successful techniques in future calls"],
+                    "generated_at": datetime.utcnow().isoformat()
+                }
 
-SALES CALL ANALYSIS:
-{context}
+            # Build gap-based coaching prompt
+            gap_descriptions = []
+            for idx, gap in enumerate(gap_items, start=1):
+                questions_not_answered = [
+                    f"   - {q['question']}" + (f" (Evidence: {q['evidence_text'][:80]}...)" if q.get('evidence_text') else "")
+                    for q in gap['questions']
+                    if not q['evidence_found']
+                ]
 
-Based on this analysis, provide coaching feedback in the following JSON format:
+                gap_descriptions.append(f"""
+GAP {idx}: {gap['item_title']}
+Definition: {gap['item_definition']}
+Coaching Area: {gap['coaching_area']}
+
+What You're Missing:
+{chr(10).join(questions_not_answered) if questions_not_answered else "   - All specific questions for this behavior"}
+
+Expected Behavior:
+{gap['behavior_summary']}
+
+Key Reminder:
+{gap['key_reminder']}
+
+Why This Matters:
+{gap['ai_reasoning']}
+""")
+
+            prompt = f"""You are an expert B2B sales coach providing gap-based coaching to help a sales representative achieve a 100/100 score.
+
+CALL CONTEXT:
+- Customer: {customer_name or 'N/A'}
+- Opportunity: {opportunity_name or 'N/A'}
+- Current Score: {score:.0f}/100
+- Risk Band: {risk_band.upper()}
+
+The salesperson has GAPS in the following checklist items (scored 0/10). Your job is to provide actionable coaching for EACH gap to help them achieve 100/100.
+
+=== GAPS TO ADDRESS ===
+{''.join(gap_descriptions)}
+
+=== YOUR TASK ===
+For each gap above, write a coaching paragraph that:
+1. Explains what was missing from the call (specific questions/behaviors not demonstrated)
+2. Explains why this gap matters (impact on deal success)
+3. Provides specific, actionable guidance on how to address this gap in future calls
+4. Includes relevant reminders and best practices
+
+Use a supportive, coaching tone. Be specific and actionable.
+
+Return your coaching in the following JSON format:
 {{
-    "feedback_text": "A 200-300 word personalized coaching summary. Be encouraging but honest. Start with what they did well, then address areas for improvement. Use 'you' to make it personal. End with an actionable next step.",
-    "strengths": [
-        {{"point": "Strength title", "explanation": "Why this matters and how to leverage it"}},
-        {{"point": "Strength title", "explanation": "Why this matters and how to leverage it"}},
-        {{"point": "Strength title", "explanation": "Why this matters and how to leverage it"}}
+    "gap_coaching": [
+        {{
+            "item_title": "Customer Fit",
+            "coaching_paragraph": "A focused paragraph (100-150 words) explaining what was missing, why it matters, and how to improve. Use 'you' to make it personal. Be specific about the questions that need to be asked and behaviors that need to be demonstrated."
+        }},
+        ... (one entry for each gap)
     ],
-    "improvement_areas": [
-        {{"point": "Area title", "explanation": "Why this is important and specific tips to improve"}},
-        {{"point": "Area title", "explanation": "Why this is important and specific tips to improve"}},
-        {{"point": "Area title", "explanation": "Why this is important and specific tips to improve"}}
-    ],
-    "action_items": [
-        "Specific, actionable task #1 for the next call",
-        "Specific, actionable task #2 for the next call",
-        "Specific, actionable task #3 for the next call"
-    ]
+    "summary": "A brief 2-3 sentence overall summary highlighting the most critical gaps to address",
+    "next_call_focus": "The single most important area to focus on for the next call"
 }}
 
 Return ONLY valid JSON, no additional text.
@@ -105,12 +225,12 @@ Return ONLY valid JSON, no additional text.
                 messages=[
                     {
                         "role": "system",
-                        "content": "You are an expert B2B sales coach. Provide constructive, personalized feedback that helps sales reps improve. Always respond with valid JSON."
+                        "content": "You are an expert B2B sales coach. Provide gap-based, actionable coaching that helps sales reps achieve 100/100. Always respond with valid JSON."
                     },
                     {"role": "user", "content": prompt}
                 ],
                 temperature=0.7,
-                max_tokens=1500
+                max_tokens=2500
             )
 
             # Parse response
@@ -125,20 +245,35 @@ Return ONLY valid JSON, no additional text.
 
             feedback = json.loads(response_text)
 
-            print(f"Coaching feedback generated successfully for session {session_id}")
+            print(f"Gap-based coaching feedback generated successfully for session {session_id}")
+
+            # Format for backward compatibility with existing schema
+            improvement_areas = [
+                {
+                    "point": item['item_title'],
+                    "explanation": item['coaching_paragraph']
+                }
+                for item in feedback.get('gap_coaching', [])
+            ]
+
+            feedback_text = f"{feedback.get('summary', '')}\n\n"
+            for item in feedback.get('gap_coaching', []):
+                feedback_text += f"**{item['item_title']}:**\n{item['coaching_paragraph']}\n\n"
+
+            feedback_text += f"**Next Call Focus:** {feedback.get('next_call_focus', '')}"
 
             return {
-                "feedback_text": feedback.get("feedback_text", ""),
-                "strengths": feedback.get("strengths", []),
-                "improvement_areas": feedback.get("improvement_areas", []),
-                "action_items": feedback.get("action_items", []),
+                "feedback_text": feedback_text.strip(),
+                "strengths": [],  # Gap-based coaching doesn't highlight strengths
+                "improvement_areas": improvement_areas,
+                "action_items": [feedback.get('next_call_focus', 'Review gap areas and prepare questions')],
                 "generated_at": datetime.utcnow().isoformat()
             }
 
         except json.JSONDecodeError as e:
             print(f"Failed to parse GPT-4 response: {e}")
             # Return fallback feedback
-            return self._generate_fallback_feedback(score, risk_band, strengths, gaps)
+            return self._generate_gap_fallback_feedback(score, len(gap_items) if 'gap_items' in locals() else 0)
         except Exception as e:
             print(f"Error generating coaching feedback: {e}")
             raise e
@@ -230,80 +365,27 @@ Return ONLY valid JSON, no additional text.
             print(f"Error generating coaching audio: {e}")
             return None
 
-    def _build_coaching_context(
+    def _generate_gap_fallback_feedback(
         self,
         score: float,
-        risk_band: str,
-        strengths: List[str],
-        gaps: List[str],
-        category_scores: Dict[str, Any],
-        customer_name: str,
-        opportunity_name: str
-    ) -> str:
-        """Build context string for GPT-4 prompt"""
-
-        risk_descriptions = {
-            "green": "Healthy - This is a strong opportunity",
-            "yellow": "Caution - Some areas need attention",
-            "red": "At Risk - Significant gaps need to be addressed"
-        }
-
-        context_parts = [
-            f"Overall Score: {score:.0f}/100 ({risk_band.upper()} - {risk_descriptions.get(risk_band, 'Unknown')})",
-        ]
-
-        if customer_name:
-            context_parts.append(f"Customer: {customer_name}")
-        if opportunity_name:
-            context_parts.append(f"Opportunity: {opportunity_name}")
-
-        context_parts.append(f"\nTop Strengths: {', '.join(strengths) if strengths else 'None identified'}")
-        context_parts.append(f"Areas for Improvement: {', '.join(gaps) if gaps else 'None identified'}")
-
-        if category_scores:
-            context_parts.append("\nCategory Breakdown:")
-            for cat_id, cat_data in category_scores.items():
-                if isinstance(cat_data, dict):
-                    name = cat_data.get('name', f'Category {cat_id}')
-                    cat_score = cat_data.get('score', 0)
-                    max_score = cat_data.get('max_score', 100)
-                    percentage = (cat_score / max_score * 100) if max_score > 0 else 0
-                    context_parts.append(f"  - {name}: {percentage:.0f}%")
-
-        return "\n".join(context_parts)
-
-    def _generate_fallback_feedback(
-        self,
-        score: float,
-        risk_band: str,
-        strengths: List[str],
-        gaps: List[str]
+        gap_count: int
     ) -> Dict[str, Any]:
         """Generate fallback feedback if GPT-4 fails"""
 
-        if risk_band == "green":
-            tone = "Great job on this sales call!"
-        elif risk_band == "yellow":
-            tone = "Good effort on this call, with some areas to strengthen."
-        else:
-            tone = "This call has significant opportunities for improvement."
+        feedback_text = f"""Your overall score was {score:.0f}/100, with {gap_count} checklist items that need improvement.
 
-        feedback_text = f"""{tone} Your overall score was {score:.0f}/100.
+To achieve a 100/100 score, focus on addressing the gaps in your sales approach. Review each checklist item that scored 0/10 and ensure you're asking the right questions and demonstrating the expected behaviors.
 
-Your strongest areas were: {', '.join(strengths) if strengths else 'not yet identified'}.
-
-Focus on improving: {', '.join(gaps) if gaps else 'Continue your good work!'}.
-
-For your next call, make sure to validate all key checklist items and gather complete information from your prospect."""
+For your next call, prepare specific questions for each gap area and practice the behaviors needed to validate all checklist items."""
 
         return {
             "feedback_text": feedback_text,
-            "strengths": [{"point": s, "explanation": "Identified as a strength"} for s in strengths[:3]],
-            "improvement_areas": [{"point": g, "explanation": "Needs improvement"} for g in gaps[:3]],
+            "strengths": [],
+            "improvement_areas": [{"point": f"Gap Area {i+1}", "explanation": "Review and address this checklist item"} for i in range(min(gap_count, 3))],
             "action_items": [
-                "Review the gaps identified and prepare questions to address them",
-                "Practice the checklist items before your next call",
-                "Set a goal to improve your score by 10 points"
+                "Review all gap areas and prepare targeted questions",
+                "Practice the expected behaviors before your next call",
+                f"Set a goal to reduce gaps from {gap_count} to {max(0, gap_count-2)}"
             ],
             "generated_at": datetime.utcnow().isoformat()
         }

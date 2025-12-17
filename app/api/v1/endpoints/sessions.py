@@ -73,16 +73,14 @@ async def generate_coaching_in_background(session_id: int, total_score: float, r
                     logger.error(f"No scoring result found for session {session_id}")
                     return
 
-                # Generate coaching feedback
+                # Generate coaching feedback (using new gap-based approach)
                 coaching_service = get_coaching_service()
 
                 feedback_data = await coaching_service.generate_coaching_feedback(
                     session_id=session_id,
                     score=scoring.total_score,
                     risk_band=risk_band.value if hasattr(risk_band, 'value') else risk_band,
-                    strengths=scoring.top_strengths or [],
-                    gaps=scoring.top_gaps or [],
-                    category_scores=scoring.category_scores or {},
+                    db=db,  # Required for gap-based coaching
                     customer_name=session.customer_name,
                     opportunity_name=session.opportunity_name or ""
                 )
@@ -741,7 +739,7 @@ async def submit_checklist(
         db.add(scoring_result)
 
     # Update session status
-    session.status = SessionStatus.SUBMITTED
+    session.status = SessionStatus.COMPLETED
     session.submitted_at = datetime.utcnow()
 
     await db.commit()
@@ -750,19 +748,76 @@ async def submit_checklist(
     logger.info(f"Final score: {total_score}/100 ({items_yes} YES, {items_no} NO)")
     logger.info(f"Risk band: {risk_band.value}")
 
-    # Trigger coaching generation in background
-    background_tasks.add_task(
-        generate_coaching_in_background,
-        session_id=session_id,
-        total_score=total_score,
-        risk_band=risk_band
-    )
+    # Generate coaching synchronously (user waits for results)
+    logger.info(f"Generating coaching feedback synchronously...")
 
-    return ChecklistSubmitResponse(
-        session_id=session_id,
-        total_score=total_score,
-        items_yes=items_yes,
-        items_no=items_no,
-        submitted_at=session.submitted_at,
-        message=f"Checklist submitted successfully! Score: {total_score}/100"
-    )
+    try:
+        from app.services.coaching_service import get_coaching_service
+        from app.models.scoring import CoachingFeedback
+
+        coaching_service = get_coaching_service()
+
+        # Generate gap-based coaching
+        feedback_data = await coaching_service.generate_coaching_feedback(
+            session_id=session_id,
+            score=total_score,
+            risk_band=risk_band.value if hasattr(risk_band, 'value') else risk_band,
+            db=db,
+            customer_name=session.customer_name,
+            opportunity_name=session.opportunity_name or ""
+        )
+
+        # Save coaching to database
+        coaching_feedback = CoachingFeedback(
+            session_id=session_id,
+            feedback_text=feedback_data['feedback_text'],
+            strengths=feedback_data.get('strengths'),
+            improvement_areas=feedback_data.get('improvement_areas'),
+            action_items=feedback_data.get('action_items'),
+            audio_s3_bucket=None,  # Audio generation can be done later via separate endpoint
+            audio_s3_key=None,
+            audio_duration=None,
+            generated_at=datetime.utcnow()
+        )
+
+        db.add(coaching_feedback)
+        await db.commit()
+        await db.refresh(coaching_feedback)
+
+        logger.info(f"✅ Coaching feedback generated successfully")
+
+        # Trigger report generation in background (it's optional and can take longer)
+        # background_tasks.add_task(
+        #     generate_coaching_in_background,
+        #     session_id=session_id,
+        #     total_score=total_score,
+        #     risk_band=risk_band
+        # )
+
+        return ChecklistSubmitResponse(
+            session_id=session_id,
+            total_score=total_score,
+            items_yes=items_yes,
+            items_no=items_no,
+            submitted_at=session.submitted_at,
+            coaching_feedback={
+                "id": coaching_feedback.id,
+                "feedback_text": coaching_feedback.feedback_text,
+                "improvement_areas": coaching_feedback.improvement_areas,
+                "action_items": coaching_feedback.action_items
+            },
+            message=f"Checklist submitted successfully! Score: {total_score}/100. Coaching feedback generated."
+        )
+
+    except Exception as coaching_error:
+        logger.error(f"Coaching generation failed: {str(coaching_error)}", exc_info=True)
+
+        # Return success for submission even if coaching fails
+        return ChecklistSubmitResponse(
+            session_id=session_id,
+            total_score=total_score,
+            items_yes=items_yes,
+            items_no=items_no,
+            submitted_at=session.submitted_at,
+            message=f"Checklist submitted successfully! Score: {total_score}/100. Coaching generation failed - please retry via /coaching endpoint."
+        )
