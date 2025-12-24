@@ -44,6 +44,36 @@ class ScoringResult(Base, TimestampMixin):
     session = relationship("Session", back_populates="scoring_result")
 
 
+class ScoreHistory(Base, TimestampMixin):
+    """
+    Historical record of score calculations for a session.
+    Preserves score changes when users edit AI answers and recalculate.
+    """
+    __tablename__ = "score_history"
+
+    id = Column(Integer, primary_key=True, index=True)
+    session_id = Column(Integer, ForeignKey("sessions.id", ondelete="CASCADE"), nullable=False, index=True)
+    scoring_result_id = Column(Integer, ForeignKey("scoring_results.id", ondelete="SET NULL"), nullable=True, index=True)
+
+    # Score snapshot
+    total_score = Column(Float, nullable=False)  # 0-100
+    risk_band = Column(SQLEnum(RiskBand), nullable=False)
+    items_validated = Column(Integer, nullable=False)
+    items_total = Column(Integer, nullable=False)
+
+    # Change tracking
+    calculated_at = Column(DateTime, nullable=False)
+    score_change = Column(Float, nullable=True)  # Difference from previous score
+    trigger_event = Column(String(100), nullable=True)  # What caused the recalculation
+
+    # Audit trail
+    created_by_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+
+    # Relationships
+    session = relationship("Session", back_populates="score_history")
+    scoring_result = relationship("ScoringResult")
+
+
 class CoachingFeedback(Base, TimestampMixin):
     """
     AI-generated personalized coaching feedback

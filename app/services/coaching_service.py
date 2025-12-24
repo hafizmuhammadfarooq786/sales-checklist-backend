@@ -1,7 +1,8 @@
 """
 Coaching Feedback Service
-Generates personalized coaching feedback using GPT-4 and audio using ElevenLabs TTS
+Generates personalized coaching feedback using hardcoded guidance text
 Now uses gap-based coaching: focuses only on items scoring 0/10
+Audio generation is disabled (code commented out but preserved)
 """
 import json
 import tempfile
@@ -20,6 +21,30 @@ from app.services.s3_service import get_s3_service
 from app.models.session import SessionResponse
 from app.models.checklist import ChecklistItem
 from app.models.checklist_behaviour import ChecklistItemBehaviour, SessionResponseAnalysis
+
+
+# Hardcoded coaching feedback for each checklist item (client-provided)
+HARDCODED_COACHING_FEEDBACK = {
+    "Customer Fit": "Systematically identifies all alternatives — competitors, internal options, and \"do nothing\" — understands who supports each and uses that insight to differentiate and reduce risk.",
+
+    "Trigger Event & Impact (Results)": "Clearly identifies why Decision Influencers want to change now, the event or condition driving urgency, and how success will be measured.",
+
+    "Sales Target": "Understands — from the customer's perspective — what they are planning to buy, how much, why, when, and how the decision will be made.",
+
+    "Finalizer": "Understands — from the customer's perspective — what they are buying, how much, why, when, and how the decision will be made. Verified through evidence, not assumption.",
+
+    "Decision Influencers (DI)": "Specifiers define what gets bought. Utilizers decide if it will work. Finalizers decide whether it gets bought.",
+
+    "Mentor": "Develops true Mentors, validates their commitment through actions, and leverages them strategically throughout the pursuit.",
+
+    "Trigger Priority": "Recognizes that even when a company is buying (RFQ/RFP), urgency varies by Decision Influencer — and validates priority individually, not collectively.",
+
+    "Alternatives": "Systematically identifies all alternatives — competitors, internal options, and \"do nothing\" — understands who supports each and uses that insight to differentiate and reduce risk.",
+
+    "Our Solution Ranking": "Understands how Decision Influencers rank the solution itself, confirms whether differentiators are essential and unique, and actively shifts negative perceptions when needed.",
+
+    "Individual Impact": "Understands that people buy, companies do not and seeks to link their product or service to what is important to each individual key Decision Influencer in a manner that the competition cannot."
+}
 
 
 class CoachingService:
@@ -47,21 +72,16 @@ class CoachingService:
         db: AsyncSession
     ) -> List[Dict[str, Any]]:
         """
-        Fetch detailed gap analysis for items scoring 0/10.
-        Returns list of gap items with behavioral framework and per-question evaluation.
+        Fetch gap analysis for items scoring 0/10.
+        Returns list of gap items with only: title, definition, and coaching area.
 
-        Each gap includes:
-        - Item title, definition
-        - Behavior summary
-        - Questions that weren't answered (with evidence status)
-        - Coaching area
-        - Key reminders
+        Per client requirement: Don't judge behavior summary, questions, and key reminders.
+        Only judge by: definition, coaching area, and title.
         """
-        # Get all session responses for this session
+        # Get all session responses for this session with score = 0
         responses_result = await db.execute(
             select(SessionResponse)
             .options(selectinload(SessionResponse.item))
-            .options(selectinload(SessionResponse.question_analyses))
             .where(SessionResponse.session_id == session_id)
             .where(SessionResponse.score == 0)  # Only items with 0/10
         )
@@ -72,44 +92,22 @@ class CoachingService:
         for response in gap_responses:
             item = response.item
 
-            # Fetch behavioral framework for this item (by ID)
+            # Fetch coaching area from behavioral framework (if exists)
             framework_result = await db.execute(
                 select(ChecklistItemBehaviour)
                 .where(ChecklistItemBehaviour.checklist_item_id == item.id)
                 .where(ChecklistItemBehaviour.isactive == True)
+                .where(ChecklistItemBehaviour.rowtype == 'Question')
                 .order_by(ChecklistItemBehaviour.order)
+                .limit(1)
             )
-            framework_rows = framework_result.scalars().all()
-
-            # Group by row type
-            behavior_summary = next((r.behaviour for r in framework_rows if r.rowtype == 'Behavior'), "")
-            questions = [r for r in framework_rows if r.rowtype == 'Question']
-            key_reminder = next((r.keyreminder for r in framework_rows if r.rowtype == 'Reminder'), "")
-            coaching_area = questions[0].coachingarea if questions else ""
-
-            # Map question analyses
-            question_analyses_map = {qa.behaviour_id: qa for qa in response.question_analyses}
-
-            # Build question list with evidence status
-            question_details = []
-            for q in questions:
-                qa = question_analyses_map.get(q.id)
-                question_details.append({
-                    'order': q.order,
-                    'question': q.question,
-                    'evidence_found': qa.evidence_found if qa else False,
-                    'evidence_text': qa.evidence_text if qa else None,
-                    'reasoning': qa.ai_reasoning if qa else None
-                })
+            framework_row = framework_result.scalar_one_or_none()
+            coaching_area = framework_row.coachingarea if framework_row else ""
 
             gap_items.append({
                 'item_title': item.title,
                 'item_definition': item.definition,
-                'behavior_summary': behavior_summary,
-                'coaching_area': coaching_area,
-                'key_reminder': key_reminder,
-                'questions': question_details,
-                'ai_reasoning': response.ai_reasoning
+                'coaching_area': coaching_area
             })
 
         return gap_items
@@ -125,22 +123,23 @@ class CoachingService:
         **kwargs  # For backward compatibility with old parameters
     ) -> Dict[str, Any]:
         """
-        Generate gap-based coaching feedback using GPT-4.
-        Now focuses ONLY on items scoring 0/10 (skips items with 10/10).
+        Generate gap-based coaching feedback using HARDCODED text.
+        Per client requirement: Uses predefined coaching guidance for each category.
+        NO AI generation - uses static coaching text defined in HARDCODED_COACHING_FEEDBACK.
 
         Args:
             session_id: Session ID for tracking
             score: Overall score (0-100)
             risk_band: Risk band (green/yellow/red)
             db: Database session to fetch gap data
-            customer_name: Customer name for context
-            opportunity_name: Opportunity name for context
+            customer_name: Customer name for context (for display only)
+            opportunity_name: Opportunity name for context (for display only)
 
         Returns:
-            Dict containing coaching_paragraphs (gap-based coaching by item)
+            Dict containing hardcoded coaching feedback for gap items
         """
         try:
-            print(f"Generating gap-based coaching feedback for session {session_id}")
+            print(f"Generating hardcoded gap-based coaching feedback for session {session_id}")
 
             # Fetch gap data (items with 0/10 score)
             gap_items = await self.fetch_gap_data(session_id, db)
@@ -155,215 +154,141 @@ class CoachingService:
                     "generated_at": datetime.utcnow().isoformat()
                 }
 
-            # Build gap-based coaching prompt
-            gap_descriptions = []
-            for idx, gap in enumerate(gap_items, start=1):
-                questions_not_answered = [
-                    f"   - {q['question']}" + (f" (Evidence: {q['evidence_text'][:80]}...)" if q.get('evidence_text') else "")
-                    for q in gap['questions']
-                    if not q['evidence_found']
-                ]
+            # Build coaching feedback using hardcoded text for each gap
+            improvement_areas = []
+            feedback_parts = []
 
-                gap_descriptions.append(f"""
-GAP {idx}: {gap['item_title']}
-Definition: {gap['item_definition']}
-Coaching Area: {gap['coaching_area']}
+            for gap in gap_items:
+                item_title = gap['item_title']
 
-What You're Missing:
-{chr(10).join(questions_not_answered) if questions_not_answered else "   - All specific questions for this behavior"}
+                # Get hardcoded coaching text for this item
+                coaching_text = HARDCODED_COACHING_FEEDBACK.get(
+                    item_title,
+                    f"Review the definition and coaching area for {item_title} to improve your approach."
+                )
 
-Expected Behavior:
-{gap['behavior_summary']}
+                improvement_areas.append({
+                    "point": item_title,
+                    "explanation": coaching_text
+                })
 
-Key Reminder:
-{gap['key_reminder']}
+                feedback_parts.append(f"**{item_title}:**\n{coaching_text}\n")
 
-Why This Matters:
-{gap['ai_reasoning']}
-""")
+            # Combine all feedback
+            feedback_text = "\n".join(feedback_parts)
 
-            prompt = f"""You are an expert B2B sales coach providing gap-based coaching to help a sales representative achieve a 100/100 score.
+            # Add context header
+            header = f"Coaching Feedback for {customer_name or 'this session'}"
+            if opportunity_name:
+                header += f" - {opportunity_name}"
+            header += f"\nScore: {score:.0f}/100 | Risk Band: {risk_band.upper()}\n\n"
 
-CALL CONTEXT:
-- Customer: {customer_name or 'N/A'}
-- Opportunity: {opportunity_name or 'N/A'}
-- Current Score: {score:.0f}/100
-- Risk Band: {risk_band.upper()}
+            feedback_text = header + feedback_text
 
-The salesperson has GAPS in the following checklist items (scored 0/10). Your job is to provide actionable coaching for EACH gap to help them achieve 100/100.
-
-=== GAPS TO ADDRESS ===
-{''.join(gap_descriptions)}
-
-=== YOUR TASK ===
-For each gap above, write a coaching paragraph that:
-1. Explains what was missing from the call (specific questions/behaviors not demonstrated)
-2. Explains why this gap matters (impact on deal success)
-3. Provides specific, actionable guidance on how to address this gap in future calls
-4. Includes relevant reminders and best practices
-
-Use a supportive, coaching tone. Be specific and actionable.
-
-Return your coaching in the following JSON format:
-{{
-    "gap_coaching": [
-        {{
-            "item_title": "Customer Fit",
-            "coaching_paragraph": "A focused paragraph (100-150 words) explaining what was missing, why it matters, and how to improve. Use 'you' to make it personal. Be specific about the questions that need to be asked and behaviors that need to be demonstrated."
-        }},
-        ... (one entry for each gap)
-    ],
-    "summary": "A brief 2-3 sentence overall summary highlighting the most critical gaps to address",
-    "next_call_focus": "The single most important area to focus on for the next call"
-}}
-
-Return ONLY valid JSON, no additional text.
-"""
-
-            response = self.openai_client.chat.completions.create(
-                model=settings.OPENAI_MODEL_GPT,
-                messages=[
-                    {
-                        "role": "system",
-                        "content": "You are an expert B2B sales coach. Provide gap-based, actionable coaching that helps sales reps achieve 100/100. Always respond with valid JSON."
-                    },
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=0.7,
-                max_tokens=2500
-            )
-
-            # Parse response
-            response_text = response.choices[0].message.content.strip()
-
-            # Clean up response if it has markdown code blocks
-            if response_text.startswith("```"):
-                response_text = response_text.split("```")[1]
-                if response_text.startswith("json"):
-                    response_text = response_text[4:]
-                response_text = response_text.strip()
-
-            feedback = json.loads(response_text)
-
-            print(f"Gap-based coaching feedback generated successfully for session {session_id}")
-
-            # Format for backward compatibility with existing schema
-            improvement_areas = [
-                {
-                    "point": item['item_title'],
-                    "explanation": item['coaching_paragraph']
-                }
-                for item in feedback.get('gap_coaching', [])
-            ]
-
-            feedback_text = f"{feedback.get('summary', '')}\n\n"
-            for item in feedback.get('gap_coaching', []):
-                feedback_text += f"**{item['item_title']}:**\n{item['coaching_paragraph']}\n\n"
-
-            feedback_text += f"**Next Call Focus:** {feedback.get('next_call_focus', '')}"
+            print(f"Hardcoded coaching feedback generated successfully for session {session_id}")
 
             return {
                 "feedback_text": feedback_text.strip(),
                 "strengths": [],  # Gap-based coaching doesn't highlight strengths
                 "improvement_areas": improvement_areas,
-                "action_items": [feedback.get('next_call_focus', 'Review gap areas and prepare questions')],
+                "action_items": ["Review the gaps above and prepare specific questions for your next call"],
                 "generated_at": datetime.utcnow().isoformat()
             }
 
-        except json.JSONDecodeError as e:
-            print(f"Failed to parse GPT-4 response: {e}")
-            # Return fallback feedback
-            return self._generate_gap_fallback_feedback(score, len(gap_items) if 'gap_items' in locals() else 0)
         except Exception as e:
             print(f"Error generating coaching feedback: {e}")
             raise e
 
-    async def generate_coaching_audio(
-        self,
-        feedback_text: str,
-        session_id: int,
-        user_id: int
-    ) -> Optional[Dict[str, Any]]:
-        """
-        Generate audio version of coaching feedback using ElevenLabs TTS
+    # AUDIO GENERATION DISABLED PER CLIENT REQUEST
+    # The client requested to comment out audio generation functionality
+    # Logic preserved for potential future use
 
-        Args:
-            feedback_text: Text to convert to speech
-            session_id: Session ID for file naming
-            user_id: User ID for S3 path
-
-        Returns:
-            Dict with S3 URL and duration, or None if TTS unavailable
-        """
-        if not self.elevenlabs_client:
-            print("ElevenLabs not configured, skipping audio generation")
-            return None
-
-        try:
-            print(f"Generating coaching audio for session {session_id}")
-
-            # Generate audio using ElevenLabs
-            audio_generator = self.elevenlabs_client.text_to_speech.convert(
-                voice_id=settings.ELEVENLABS_VOICE_ID,
-                text=feedback_text,
-                model_id="eleven_multilingual_v2",
-                output_format="mp3_44100_128"
-            )
-
-            # Collect audio bytes from generator
-            audio_bytes = b"".join(audio_generator)
-
-            # Save to temporary file
-            temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
-            temp_file.write(audio_bytes)
-            temp_file.close()
-
-            # Calculate approximate duration (128kbps = 16KB/s)
-            duration_seconds = len(audio_bytes) / (128 * 1024 / 8)
-
-            # Upload to S3
-            s3_key = f"coaching/{user_id}/{session_id}/feedback_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.mp3"
-
-            try:
-                s3_service = get_s3_service()
-                s3_url = s3_service.upload_file(
-                    temp_file.name,
-                    s3_key,
-                    content_type="audio/mpeg",
-                    bucket_name=settings.S3_BUCKET_AUDIO
-                )
-                storage_type = "s3"
-            except Exception as s3_error:
-                print(f"S3 upload failed, using local storage: {s3_error}")
-                # Fall back to local storage
-                local_dir = f"uploads/coaching/{user_id}/{session_id}"
-                os.makedirs(local_dir, exist_ok=True)
-                local_path = f"{local_dir}/feedback_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.mp3"
-
-                import shutil
-                shutil.copy(temp_file.name, local_path)
-                s3_url = local_path
-                storage_type = "local"
-            finally:
-                # Clean up temp file
-                os.unlink(temp_file.name)
-
-            print(f"Coaching audio generated: {s3_url} ({int(duration_seconds)}s)")
-
-            return {
-                "audio_url": s3_url,
-                "s3_bucket": settings.S3_BUCKET_AUDIO if storage_type == "s3" else None,
-                "s3_key": s3_key if storage_type == "s3" else None,
-                "duration_seconds": int(duration_seconds),
-                "storage_type": storage_type
-            }
-
-        except ApiError as e:
-            print(f"ElevenLabs API error: {e}")
-            return None
-        except Exception as e:
-            print(f"Error generating coaching audio: {e}")
-            return None
+    # async def generate_coaching_audio(
+    #     self,
+    #     feedback_text: str,
+    #     session_id: int,
+    #     user_id: int
+    # ) -> Optional[Dict[str, Any]]:
+    #     """
+    #     Generate audio version of coaching feedback using ElevenLabs TTS
+    #
+    #     Args:
+    #         feedback_text: Text to convert to speech
+    #         session_id: Session ID for file naming
+    #         user_id: User ID for S3 path
+    #
+    #     Returns:
+    #         Dict with S3 URL and duration, or None if TTS unavailable
+    #     """
+    #     if not self.elevenlabs_client:
+    #         print("ElevenLabs not configured, skipping audio generation")
+    #         return None
+    #
+    #     try:
+    #         print(f"Generating coaching audio for session {session_id}")
+    #
+    #         # Generate audio using ElevenLabs
+    #         audio_generator = self.elevenlabs_client.text_to_speech.convert(
+    #             voice_id=settings.ELEVENLABS_VOICE_ID,
+    #             text=feedback_text,
+    #             model_id="eleven_multilingual_v2",
+    #             output_format="mp3_44100_128"
+    #         )
+    #
+    #         # Collect audio bytes from generator
+    #         audio_bytes = b"".join(audio_generator)
+    #
+    #         # Save to temporary file
+    #         temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
+    #         temp_file.write(audio_bytes)
+    #         temp_file.close()
+    #
+    #         # Calculate approximate duration (128kbps = 16KB/s)
+    #         duration_seconds = len(audio_bytes) / (128 * 1024 / 8)
+    #
+    #         # Upload to S3
+    #         s3_key = f"coaching/{user_id}/{session_id}/feedback_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.mp3"
+    #
+    #         try:
+    #             s3_service = get_s3_service()
+    #             s3_url = s3_service.upload_file(
+    #                 temp_file.name,
+    #                 s3_key,
+    #                 content_type="audio/mpeg",
+    #                 bucket_name=settings.S3_BUCKET_AUDIO
+    #             )
+    #             storage_type = "s3"
+    #         except Exception as s3_error:
+    #             print(f"S3 upload failed, using local storage: {s3_error}")
+    #             # Fall back to local storage
+    #             local_dir = f"uploads/coaching/{user_id}/{session_id}"
+    #             os.makedirs(local_dir, exist_ok=True)
+    #             local_path = f"{local_dir}/feedback_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.mp3"
+    #
+    #             import shutil
+    #             shutil.copy(temp_file.name, local_path)
+    #             s3_url = local_path
+    #             storage_type = "local"
+    #         finally:
+    #             # Clean up temp file
+    #             os.unlink(temp_file.name)
+    #
+    #         print(f"Coaching audio generated: {s3_url} ({int(duration_seconds)}s)")
+    #
+    #         return {
+    #             "audio_url": s3_url,
+    #             "s3_bucket": settings.S3_BUCKET_AUDIO if storage_type == "s3" else None,
+    #             "s3_key": s3_key if storage_type == "s3" else None,
+    #             "duration_seconds": int(duration_seconds),
+    #             "storage_type": storage_type
+    #         }
+    #
+    #     except ApiError as e:
+    #         print(f"ElevenLabs API error: {e}")
+    #         return None
+    #     except Exception as e:
+    #         print(f"Error generating coaching audio: {e}")
+    #         return None
 
     def _generate_gap_fallback_feedback(
         self,

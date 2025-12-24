@@ -154,14 +154,15 @@ async def generate_coaching_feedback(
             opportunity_name=session.opportunity_name or ""
         )
 
-        # Generate audio if requested
+        # AUDIO GENERATION DISABLED PER CLIENT REQUEST
+        # Audio generation is currently disabled - client requested text-only coaching
         audio_data = None
-        if include_audio and feedback_data.get('feedback_text'):
-            audio_data = await coaching_service.generate_coaching_audio(
-                feedback_text=feedback_data['feedback_text'],
-                session_id=session_id,
-                user_id=user_id
-            )
+        # if include_audio and feedback_data.get('feedback_text'):
+        #     audio_data = await coaching_service.generate_coaching_audio(
+        #         feedback_text=feedback_data['feedback_text'],
+        #         session_id=session_id,
+        #         user_id=user_id
+        #     )
 
         # Save to database
         coaching_feedback = CoachingFeedback(
@@ -326,13 +327,15 @@ async def regenerate_coaching_feedback(
             opportunity_name=session.opportunity_name or ""
         )
 
+        # AUDIO GENERATION DISABLED PER CLIENT REQUEST
+        # Audio generation is currently disabled - client requested text-only coaching
         audio_data = None
-        if include_audio and feedback_data.get('feedback_text'):
-            audio_data = await coaching_service.generate_coaching_audio(
-                feedback_text=feedback_data['feedback_text'],
-                session_id=session_id,
-                user_id=user_id
-            )
+        # if include_audio and feedback_data.get('feedback_text'):
+        #     audio_data = await coaching_service.generate_coaching_audio(
+        #         feedback_text=feedback_data['feedback_text'],
+        #         session_id=session_id,
+        #         user_id=user_id
+        #     )
 
         coaching_feedback = CoachingFeedback(
             session_id=session_id,
