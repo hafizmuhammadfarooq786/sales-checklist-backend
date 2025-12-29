@@ -14,8 +14,10 @@ from app.models.session import (
     Transcript,
     SessionResponse,
 )
-from app.models.scoring import ScoringResult, CoachingFeedback, RiskBand
+from app.models.scoring import ScoringResult, CoachingFeedback, RiskBand, ScoreHistory
 from app.models.report import Report, ReportFormat
+from app.models.invitation import Invitation
+from app.models.organization_settings import OrganizationSettings
 
 # Export all for easy imports
 __all__ = [
@@ -36,8 +38,11 @@ __all__ = [
     "Transcript",
     "SessionResponse",
     "ScoringResult",
+    "ScoreHistory",
     "CoachingFeedback",
     "RiskBand",
     "Report",
     "ReportFormat",
+    "Invitation",
+    "OrganizationSettings",
 ]

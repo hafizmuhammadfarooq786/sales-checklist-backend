@@ -13,6 +13,8 @@ from app.api.v1.endpoints import (
     transcription,
     coaching,
     reports,
+    admin,
+    organization,
 )
 from app.api.v1.endpoints import responses_simple as responses
 
@@ -29,6 +31,8 @@ api_router.include_router(transcription.router, prefix="/sessions", tags=["Trans
 api_router.include_router(coaching.router, prefix="/sessions", tags=["Coaching"])
 api_router.include_router(reports.router, prefix="/sessions", tags=["Reports"])
 api_router.include_router(users.router, prefix="/users", tags=["Users"])
+api_router.include_router(admin.router, prefix="/admin", tags=["Admin - SYSTEM_ADMIN"])
+api_router.include_router(organization.router, prefix="/organization", tags=["Organization Management"])
 
 
 @api_router.get("/")
@@ -43,6 +47,8 @@ async def api_root():
             "checklists": "/checklists",
             "sessions": "/sessions",
             "users": "/users",
+            "admin": "/admin (SYSTEM_ADMIN only)",
+            "organization": "/organization (ADMIN/MANAGER)",
             "docs": "/docs",
             "health": "/health"
         }

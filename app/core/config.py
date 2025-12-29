@@ -69,6 +69,9 @@ class Settings(BaseSettings):
         default=["http://localhost:3000"]
     )
 
+    # Frontend URL (for invitation emails and redirects)
+    FRONTEND_URL: str = Field(default="http://localhost:3000")
+
     # Rate Limiting
     RATE_LIMIT_PER_MINUTE: int = 60
 
