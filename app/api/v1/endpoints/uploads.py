@@ -80,8 +80,23 @@ async def upload_audio_file(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Session not found",
             )
-        
-        logger.info(f"Session {session_id} found, proceeding with upload")
+
+        # Validate session mode (audio upload only for audio mode sessions)
+        from app.models.session import SessionMode
+
+        if session.session_mode != SessionMode.AUDIO:
+            logger.warning(f"Audio upload attempted for manual mode session {session_id}")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "error": "INVALID_SESSION_MODE",
+                    "message": "Audio upload is only available for audio mode sessions. This session is in manual mode.",
+                    "session_mode": session.session_mode.value,
+                    "suggestion": f"Use POST /api/v1/sessions/{session_id}/manual-checklist to submit the checklist"
+                }
+            )
+
+        logger.info(f"Session {session_id} found and validated (audio mode), proceeding with upload")
 
         # Check if audio file already exists
         existing_audio_result = await db.execute(

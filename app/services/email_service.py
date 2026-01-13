@@ -124,7 +124,7 @@ class TemplateLoader(BaseLoader):
     <div class="content">
         <h2>Hello {{ user_name }},</h2>
         <p>Welcome to {{ project_name }}! We're thrilled to have you on board. Your email has been verified and your account is now fully activated.</p>
-        
+
         <h3>Get Started with These Key Features:</h3>
         <div class="feature">
             <strong>📊 Sales Session Analysis</strong><br>
@@ -142,12 +142,74 @@ class TemplateLoader(BaseLoader):
             <strong>📝 Detailed Reports</strong><br>
             Generate comprehensive reports for your sales activities
         </div>
-        
+
         <p style="text-align: center;">
             <a href="{{ dashboard_url }}" class="button">Go to Dashboard</a>
         </p>
-        
+
         <p>If you have any questions or need assistance getting started, don't hesitate to reach out to our support team.</p>
+        <p>Best regards,<br>The {{ project_name }} Team</p>
+    </div>
+    <div class="footer">
+        <p>&copy; 2024 {{ project_name }}. All rights reserved.</p>
+        <p>This email was sent to {{ user_email }}</p>
+    </div>
+</body>
+</html>
+            ''',
+            'invitation': '''
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>You're Invited to Join {{ organization_name }} - {{ project_name }}</title>
+    <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px; }
+        .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 20px; text-align: center; border-radius: 10px 10px 0 0; }
+        .content { background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px; }
+        .button { display: inline-block; background: #667eea; color: white; padding: 12px 30px; text-decoration: none; border-radius: 5px; margin: 20px 0; font-weight: bold; }
+        .info-box { background: white; padding: 20px; margin: 20px 0; border-radius: 5px; border-left: 4px solid #667eea; }
+        .footer { text-align: center; margin-top: 30px; font-size: 14px; color: #666; }
+        .highlight { color: #667eea; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>📬 You're Invited!</h1>
+        <p>Join {{ organization_name }} on {{ project_name }}</p>
+    </div>
+    <div class="content">
+        <h2>Hello!</h2>
+        <p><strong>{{ inviter_name }}</strong> has invited you to join <span class="highlight">{{ organization_name }}</span> on {{ project_name }}.</p>
+
+        <div class="info-box">
+            <strong>Invitation Details:</strong><br>
+            <p style="margin: 10px 0;">
+                <strong>Organization:</strong> {{ organization_name }}<br>
+                {% if team_name %}
+                <strong>Team:</strong> {{ team_name }}<br>
+                {% endif %}
+                <strong>Role:</strong> {{ role|capitalize }}<br>
+                <strong>Expires:</strong> 7 days from now
+            </p>
+        </div>
+
+        <p>{{ project_name }} helps sales teams analyze calls, track performance, and improve their sales process with AI-powered insights.</p>
+
+        <p style="text-align: center;">
+            <a href="{{ invite_url }}" class="button">Accept Invitation</a>
+        </p>
+
+        <p>If the button above doesn't work, you can copy and paste this URL into your browser:</p>
+        <p style="word-break: break-all; background: #eee; padding: 10px; border-radius: 5px; font-size: 12px;">{{ invite_url }}</p>
+
+        <p style="color: #856404; background: #fff3cd; padding: 15px; border-radius: 5px;">
+            <strong>Note:</strong> This invitation will expire in <strong>7 days</strong> for security reasons.
+        </p>
+
+        <p>If you didn't expect this invitation or don't know {{ inviter_name }}, you can safely ignore this email.</p>
+
         <p>Best regards,<br>The {{ project_name }} Team</p>
     </div>
     <div class="footer">
@@ -436,6 +498,48 @@ class EmailService:
             logger.error(f"Failed to verify email {email}: {str(e)}")
             return False
 
+    async def send_invitation_email(
+        self,
+        to_email: str,
+        organization_name: str,
+        inviter_name: str,
+        invite_url: str,
+        role: str,
+        team_name: Optional[str] = None
+    ) -> bool:
+        """
+        Send organization invitation email
+
+        Args:
+            to_email: Email address to send invitation to
+            organization_name: Name of the organization
+            inviter_name: Name of person sending invitation
+            invite_url: URL to accept invitation
+            role: User role (rep, manager, admin)
+            team_name: Optional team name
+
+        Returns:
+            bool: True if email was sent successfully
+        """
+        template = self.env.get_template('invitation')
+        html_content = template.render(
+            user_email=to_email,
+            organization_name=organization_name,
+            inviter_name=inviter_name,
+            invite_url=invite_url,
+            role=role,
+            team_name=team_name or "No team assigned",
+            project_name=settings.PROJECT_NAME
+        )
+
+        subject = f"You're invited to join {organization_name} on {settings.PROJECT_NAME}"
+
+        return self._send_email(
+            to_emails=[to_email],
+            subject=subject,
+            html_body=html_content
+        )
+
     def get_send_quota(self) -> Dict[str, Any]:
         """
         Get the current send quota for the AWS account
@@ -459,3 +563,8 @@ class EmailService:
 
 # Global email service instance
 email_service = EmailService()
+
+
+def get_email_service() -> EmailService:
+    """Get the global email service instance"""
+    return email_service

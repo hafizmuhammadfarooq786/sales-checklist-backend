@@ -16,6 +16,7 @@ from app.schemas.session import (
     SessionUpdate,
     SessionResponse,
     SessionListResponse,
+    ManualChecklistSubmit,
 )
 from app.api.dependencies import (
     get_current_user_id,
@@ -238,6 +239,11 @@ async def create_session(
 ):
     """
     Create a new session.
+
+    Supports two modes:
+    - audio: Traditional flow (record audio, AI analyzes)
+    - manual: Manual checklist entry (no audio needed)
+
     User ID should come from authenticated JWT token.
     """
     # Verify user exists
@@ -252,14 +258,22 @@ async def create_session(
         )
 
     # Create session
+    from app.models.session import SessionMode
+
+    # Convert lowercase session_mode to uppercase for enum
+    session_mode_value = session_data.session_mode.upper()
+
     session = Session(
         user_id=user_id,
         customer_name=session_data.customer_name,
         opportunity_name=session_data.opportunity_name,
         decision_influencer=session_data.decision_influencer,
         deal_stage=session_data.deal_stage,
+        session_mode=SessionMode(session_mode_value),
         status=SessionStatus.DRAFT,
     )
+
+    logger.info(f"Creating new session for user {user_id} in {session_data.session_mode} mode")
 
     db.add(session)
     await db.commit()
@@ -635,6 +649,143 @@ async def update_checklist_item(
         score=response.score,
         message="Checklist item updated successfully"
     )
+
+
+@router.post("/{session_id}/manual-checklist", response_model=SessionResponse)
+async def submit_manual_checklist(
+    session_id: int,
+    checklist_data: ManualChecklistSubmit,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Submit manually filled checklist (for manual mode sessions)
+
+    Workflow:
+    1. Validate session is in manual mode
+    2. Create SessionResponse records from manual input
+    3. Calculate scores (same as audio mode)
+    4. Generate AI coaching feedback (without transcript context)
+    5. Mark session as pending review
+
+    RBAC Applied:
+    - REP: Can only submit own session checklists
+    - MANAGER: Can submit checklists from users in their team
+    - ADMIN: Can submit checklists from users in their organization
+    """
+    logger.info(f"Manual checklist submission for session {session_id} by user {current_user.id}")
+
+    # Check role-based access
+    has_access = await check_session_access(session_id, current_user, db)
+    if not has_access:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Session not found"
+        )
+
+    # Get session
+    session_result = await db.execute(
+        select(Session).where(Session.id == session_id)
+    )
+    session = session_result.scalar_one_or_none()
+
+    if not session:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Session not found"
+        )
+
+    # Validate session mode
+    from app.models.session import SessionMode
+
+    if session.session_mode != SessionMode.MANUAL:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "error": "INVALID_SESSION_MODE",
+                "message": "This endpoint is only for manual mode sessions. This session is in audio mode.",
+                "session_mode": session.session_mode.value
+            }
+        )
+
+    # Check if already submitted
+    from app.models.session import SessionResponse as SessionResponseModel
+
+    existing_responses_result = await db.execute(
+        select(SessionResponseModel).where(SessionResponseModel.session_id == session_id)
+    )
+    existing_responses = existing_responses_result.scalars().first()
+
+    if existing_responses:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Checklist already submitted for this session"
+        )
+
+    # Create SessionResponse records from manual input
+    response_records = []
+    for item in checklist_data.responses:
+        # Format notes for ai_reasoning field
+        reasoning = f"Manual entry by user"
+        if item.notes:
+            reasoning += f". Notes: {item.notes}"
+
+        response_record = SessionResponseModel(
+            session_id=session_id,
+            item_id=item.item_id,
+            ai_answer=item.answer,  # In manual mode, user's answer is treated as "AI answer"
+            ai_reasoning=reasoning,
+            user_answer=None,  # No override needed since this IS the user's answer
+            was_changed=False,
+            score=10 if item.answer else 0
+        )
+        response_records.append(response_record)
+        db.add(response_record)
+
+    await db.commit()
+
+    logger.info(f"Created {len(response_records)} manual responses for session {session_id}")
+
+    # Calculate total score
+    total_score = sum(r.score for r in response_records)
+
+    # Determine risk band
+    if total_score >= 80:
+        risk_band = RiskBand.GREEN
+    elif total_score >= 60:
+        risk_band = RiskBand.YELLOW
+    else:
+        risk_band = RiskBand.RED
+
+    # Create ScoringResult
+    scoring_result = ScoringResult(
+        session_id=session_id,
+        total_score=total_score,
+        risk_band=risk_band,
+        items_validated=sum(1 for r in response_records if r.score > 0),
+        items_total=len(response_records)
+    )
+    db.add(scoring_result)
+
+    # Update session status
+    session.status = SessionStatus.COMPLETED
+    session.submitted_at = datetime.utcnow()
+
+    await db.commit()
+    await db.refresh(session)
+
+    logger.info(f"Session {session_id} scoring complete: {total_score} points, {risk_band.value} band")
+
+    # Generate coaching feedback in background (without transcript)
+    background_tasks.add_task(
+        generate_coaching_in_background,
+        session_id,
+        total_score,
+        risk_band
+    )
+
+    return session
 
 
 @router.post("/{session_id}/checklist/submit", response_model=ChecklistSubmitResponse)

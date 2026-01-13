@@ -9,13 +9,16 @@ from app.models.checklist import ChecklistCategory, ChecklistItem, CoachingQuest
 from app.models.checklist_behaviour import ChecklistItemBehaviour, SessionResponseAnalysis
 from app.models.session import (
     Session,
+    SessionMode,
     SessionStatus,
     AudioFile,
     Transcript,
     SessionResponse,
 )
-from app.models.scoring import ScoringResult, CoachingFeedback, RiskBand
+from app.models.scoring import ScoringResult, CoachingFeedback, RiskBand, ScoreHistory
 from app.models.report import Report, ReportFormat
+from app.models.invitation import Invitation
+from app.models.organization_settings import OrganizationSettings
 
 # Export all for easy imports
 __all__ = [
@@ -31,13 +34,17 @@ __all__ = [
     "ChecklistItemBehaviour",
     "SessionResponseAnalysis",
     "Session",
+    "SessionMode",
     "SessionStatus",
     "AudioFile",
     "Transcript",
     "SessionResponse",
     "ScoringResult",
+    "ScoreHistory",
     "CoachingFeedback",
     "RiskBand",
     "Report",
     "ReportFormat",
+    "Invitation",
+    "OrganizationSettings",
 ]
