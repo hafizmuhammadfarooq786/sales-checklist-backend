@@ -8,12 +8,18 @@ import enum
 from app.models.base import Base, TimestampMixin
 
 
+class SessionMode(str, enum.Enum):
+    """Session input mode"""
+    AUDIO = "AUDIO"  # Traditional: record audio → AI analyzes → user reviews
+    MANUAL = "MANUAL"  # Manual: user fills out checklist directly, no audio needed
+
+
 class SessionStatus(str, enum.Enum):
     """Session processing status"""
     DRAFT = "draft"  # Started but not submitted
-    UPLOADING = "uploading"  # Audio file uploading
-    PROCESSING = "processing"  # Transcribing audio
-    ANALYZING = "analyzing"  # AI mapping to checklist
+    UPLOADING = "uploading"  # Audio file uploading (audio mode only)
+    PROCESSING = "processing"  # Transcribing audio (audio mode only)
+    ANALYZING = "analyzing"  # AI mapping to checklist (audio mode only)
     SCORING = "scoring"  # Calculating scores
     PENDING_REVIEW = "pending_review"  # Ready for user review
     COMPLETED = "completed"  # All done
@@ -35,6 +41,9 @@ class Session(Base, TimestampMixin):
     decision_influencer = Column(String(255), nullable=True)
     deal_stage = Column(String(100), nullable=True)
 
+    # Session mode (audio vs manual entry)
+    session_mode = Column(SQLEnum(SessionMode), default=SessionMode.AUDIO, nullable=False)
+
     # Status
     status = Column(SQLEnum(SessionStatus), default=SessionStatus.DRAFT, nullable=False)
 
@@ -51,6 +60,16 @@ class Session(Base, TimestampMixin):
     score_history = relationship("ScoreHistory", back_populates="session", cascade="all, delete-orphan", order_by="desc(ScoreHistory.calculated_at)")
     coaching_feedback = relationship("CoachingFeedback", back_populates="session", uselist=False, cascade="all, delete-orphan")
     report = relationship("Report", back_populates="session", uselist=False, cascade="all, delete-orphan")
+
+    @property
+    def requires_audio(self) -> bool:
+        """Check if this session requires audio recording"""
+        return self.session_mode == SessionMode.AUDIO
+
+    @property
+    def is_manual_mode(self) -> bool:
+        """Check if this is a manual checklist session"""
+        return self.session_mode == SessionMode.MANUAL
 
 
 class AudioFile(Base, TimestampMixin):

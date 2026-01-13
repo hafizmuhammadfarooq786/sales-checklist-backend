@@ -9,6 +9,7 @@ from app.models.checklist import ChecklistCategory, ChecklistItem, CoachingQuest
 from app.models.checklist_behaviour import ChecklistItemBehaviour, SessionResponseAnalysis
 from app.models.session import (
     Session,
+    SessionMode,
     SessionStatus,
     AudioFile,
     Transcript,
@@ -33,6 +34,7 @@ __all__ = [
     "ChecklistItemBehaviour",
     "SessionResponseAnalysis",
     "Session",
+    "SessionMode",
     "SessionStatus",
     "AudioFile",
     "Transcript",

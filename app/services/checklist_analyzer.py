@@ -29,7 +29,8 @@ class ChecklistAnalyzer:
 
     def __init__(self):
         self.client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
-        self.model = "gpt-4-turbo-preview"  # or "gpt-4" depending on availability
+        # Use gpt-4o or gpt-4-turbo (latest models with better JSON mode support)
+        self.model = "gpt-4o"  # Faster and cheaper than gpt-4-turbo-preview
 
     async def get_checklist_items(self, db: AsyncSession) -> List[ChecklistItem]:
         """Fetch all 10 active checklist items with their categories"""
@@ -147,18 +148,20 @@ Your task: Evaluate the transcript against 10 checklist items. For each item:
 
 Be objective and evidence-based. Only mark YES if there is clear evidence in the transcript.
 
+IMPORTANT: Keep evidence_text quotes SHORT (max 50 words) and reasoning BRIEF (1 sentence).
+
 === CHECKLIST ITEMS ===
 {''.join(items_description)}
 
 === TRANSCRIPT ===
-{transcript}
+{transcript[:8000]}
 
 === INSTRUCTIONS ===
-1. Read the entire transcript carefully
+1. Read the transcript carefully
 2. For each of the 10 items above:
-   a. Answer EACH evaluation question (Yes/No + quote evidence from transcript if found)
+   a. Answer EACH evaluation question (Yes/No + SHORT quote if found)
    b. Determine overall item answer based on questions
-   c. Provide brief reasoning for overall decision
+   c. Provide BRIEF reasoning (1-2 sentences max)
 3. Return your analysis as JSON
 
 Output format (JSON):
@@ -167,28 +170,26 @@ Output format (JSON):
     {{
       "item_number": 1,
       "answer": true,
-      "reasoning": "Overall summary of why this item was marked Yes/No",
+      "reasoning": "Brief summary why Yes/No (max 2 sentences)",
       "question_evaluations": [
         {{
           "question_number": 1,
           "evidence_found": true,
-          "evidence_text": "Direct quote from transcript showing this was addressed",
-          "reasoning": "Brief explanation"
+          "evidence_text": "Short quote (max 50 words)",
+          "reasoning": "Brief explanation (1 sentence)"
         }},
         {{
           "question_number": 2,
           "evidence_found": false,
           "evidence_text": null,
-          "reasoning": "This was not discussed in the call"
-        }},
-        ... (for all questions of this item)
+          "reasoning": "Not discussed"
+        }}
       ]
-    }},
-    ... (continue for all 10 items)
+    }}
   ]
 }}
 
-Analyze now and return ONLY the JSON output (no additional text):
+Return ONLY valid JSON, no additional text:
 """
         return prompt, behavioral_data_map
 
@@ -231,7 +232,7 @@ Analyze now and return ONLY the JSON output (no additional text):
                 messages=[
                     {
                         "role": "system",
-                        "content": "You are an expert sales coach who evaluates sales calls objectively and provides structured feedback."
+                        "content": "You are an expert sales coach who evaluates sales calls objectively and provides structured feedback. Return ONLY valid JSON with no additional text."
                     },
                     {
                         "role": "user",
@@ -239,12 +240,50 @@ Analyze now and return ONLY the JSON output (no additional text):
                     }
                 ],
                 temperature=0.3,  # Lower temperature for more consistent, objective responses
+                max_tokens=4000,  # Increased from default to handle full response
                 response_format={"type": "json_object"}  # Ensure JSON output
             )
 
             # Parse response
             result_text = response.choices[0].message.content
-            result_json = json.loads(result_text)
+
+            # Log the response for debugging
+            print(f"=== RAW AI RESPONSE (first 1000 chars) ===")
+            print(result_text[:1000])
+            print(f"=== END RAW RESPONSE (total length: {len(result_text)}) ===")
+
+            # Try to extract JSON if it's wrapped in markdown code blocks
+            cleaned_text = result_text.strip()
+            if cleaned_text.startswith("```"):
+                # Remove markdown code blocks
+                lines = cleaned_text.split("\n")
+                # Remove first line (```json or ```)
+                lines = lines[1:]
+                # Remove last line if it's ```
+                if lines and lines[-1].strip() == "```":
+                    lines = lines[:-1]
+                cleaned_text = "\n".join(lines).strip()
+
+            try:
+                result_json = json.loads(cleaned_text)
+            except json.JSONDecodeError as e:
+                print(f"❌ JSON Parse Error: {str(e)}")
+                print(f"Problematic text around error position:")
+                error_pos = e.pos if hasattr(e, 'pos') else 0
+                start = max(0, error_pos - 100)
+                end = min(len(cleaned_text), error_pos + 100)
+                print(f"...{cleaned_text[start:end]}...")
+
+                # Save full response to file for debugging
+                import os
+                debug_dir = "/tmp/ai_debug"
+                os.makedirs(debug_dir, exist_ok=True)
+                debug_file = f"{debug_dir}/failed_response_{session_id}.txt"
+                with open(debug_file, "w") as f:
+                    f.write(result_text)
+                print(f"💾 Full response saved to: {debug_file}")
+
+                raise ValueError(f"Failed to parse AI response as JSON: {str(e)}. Response saved to {debug_file}")
 
             # Map results to item IDs
             analysis_results = {}
