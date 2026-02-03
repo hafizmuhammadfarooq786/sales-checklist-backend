@@ -15,6 +15,7 @@ from app.api.v1.endpoints import (
     reports,
     admin,
     organization,
+    manager_notes,
 )
 from app.api.v1.endpoints import responses_simple as responses
 
@@ -33,6 +34,7 @@ api_router.include_router(reports.router, prefix="/sessions", tags=["Reports"])
 api_router.include_router(users.router, prefix="/users", tags=["Users"])
 api_router.include_router(admin.router, prefix="/admin", tags=["Admin - SYSTEM_ADMIN"])
 api_router.include_router(organization.router, prefix="/organization", tags=["Organization Management"])
+api_router.include_router(manager_notes.router, prefix="/sessions", tags=["Manager Notes"])
 
 
 @api_router.get("/")

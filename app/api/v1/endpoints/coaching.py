@@ -13,7 +13,8 @@ from typing import Optional
 from app.db.session import get_db
 from app.models.session import Session, SessionStatus
 from app.models.scoring import ScoringResult, CoachingFeedback
-from app.api.dependencies import get_current_user_id
+from app.models.user import User
+from app.api.dependencies import get_current_user, get_session_access_filter
 from app.services.coaching_service import get_coaching_service
 
 router = APIRouter()
@@ -76,7 +77,7 @@ async def generate_coaching_feedback(
     session_id: int,
     include_audio: bool = True,
     background_tasks: BackgroundTasks = None,
-    user_id: int = Depends(get_current_user_id),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     request: Request = None,
 ):
@@ -92,12 +93,19 @@ async def generate_coaching_feedback(
 
     Returns:
         Coaching feedback with personalized insights and action items
+
+    RBAC:
+    - REP: Can generate for own sessions
+    - MANAGER: Can generate for team sessions
+    - ADMIN: Can generate for org sessions
+    - SYSTEM_ADMIN: Can generate for all sessions
     """
-    # Verify session belongs to user
+    # Verify session access with RBAC
+    access_filter = get_session_access_filter(current_user)
     session_result = await db.execute(
         select(Session).where(
             Session.id == session_id,
-            Session.user_id == user_id,
+            access_filter
         )
     )
     session = session_result.scalar_one_or_none()
@@ -209,7 +217,7 @@ async def generate_coaching_feedback(
 @router.get("/{session_id}/coaching")
 async def get_coaching_feedback(
     session_id: int,
-    user_id: int = Depends(get_current_user_id),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     request: Request = None,
 ):
@@ -218,15 +226,22 @@ async def get_coaching_feedback(
 
     Returns:
         Coaching feedback with personalized insights and action items
+
+    RBAC:
+    - REP: Can view own sessions
+    - MANAGER: Can view team sessions
+    - ADMIN: Can view org sessions
+    - SYSTEM_ADMIN: Can view all sessions
     """
     from app.services.s3_service import get_s3_service
     from app.core.config import settings
-    
-    # Verify session belongs to user
+
+    # Verify session access with RBAC
+    access_filter = get_session_access_filter(current_user)
     session_result = await db.execute(
         select(Session).where(
             Session.id == session_id,
-            Session.user_id == user_id,
+            access_filter
         )
     )
     session = session_result.scalar_one_or_none()
@@ -234,7 +249,7 @@ async def get_coaching_feedback(
     if not session:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Session not found"
+            detail="Session not found or access denied"
         )
 
     # Get coaching feedback
@@ -269,7 +284,7 @@ async def get_coaching_feedback(
 async def regenerate_coaching_feedback(
     session_id: int,
     include_audio: bool = True,
-    user_id: int = Depends(get_current_user_id),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     request: Request = None,
 ):
@@ -277,12 +292,19 @@ async def regenerate_coaching_feedback(
     Regenerate coaching feedback for a session (overwrites existing).
 
     Use this if you want fresh coaching insights after updating responses.
+
+    RBAC:
+    - REP: Can regenerate for own sessions
+    - MANAGER: Can regenerate for team sessions
+    - ADMIN: Can regenerate for org sessions
+    - SYSTEM_ADMIN: Can regenerate for all sessions
     """
-    # Verify session belongs to user
+    # Verify session access with RBAC
+    access_filter = get_session_access_filter(current_user)
     session_result = await db.execute(
         select(Session).where(
             Session.id == session_id,
-            Session.user_id == user_id,
+            access_filter
         )
     )
     session = session_result.scalar_one_or_none()
@@ -290,7 +312,7 @@ async def regenerate_coaching_feedback(
     if not session:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Session not found"
+            detail="Session not found or access denied"
         )
 
     # Delete existing coaching feedback

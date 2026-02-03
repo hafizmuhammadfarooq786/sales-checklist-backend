@@ -14,7 +14,8 @@ The AI evaluates based on:
 3. Transcript content (actual call recording)
 """
 import json
-from typing import List, Dict
+import re
+from typing import List, Dict, Optional
 from openai import AsyncOpenAI
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -148,7 +149,12 @@ Your task: Evaluate the transcript against 10 checklist items. For each item:
 
 Be objective and evidence-based. Only mark YES if there is clear evidence in the transcript.
 
-IMPORTANT: Keep evidence_text quotes SHORT (max 50 words) and reasoning BRIEF (1 sentence).
+IMPORTANT JSON FORMATTING RULES:
+- Keep evidence_text quotes SHORT (max 50 words) and reasoning BRIEF (1 sentence)
+- Escape all quotes in strings using \\\" (backslash-double-quote)
+- Escape all newlines in strings using \\n (backslash-n)
+- Do NOT include unescaped quotes or newlines in any string values
+- Keep all string values on a single line when possible
 
 === CHECKLIST ITEMS ===
 {''.join(items_description)}
@@ -189,15 +195,155 @@ Output format (JSON):
   ]
 }}
 
+CRITICAL REQUIREMENTS:
+- You MUST return exactly 10 items (item_number 1 through 10)
+- Each item MUST have item_number matching its position (1, 2, 3, ..., 10)
+- Do NOT skip any items, even if the transcript doesn't contain relevant information
+- For items with no evidence, set answer: false and provide reasoning explaining why
+
 Return ONLY valid JSON, no additional text:
 """
         return prompt, behavioral_data_map
+
+    def extract_json_from_text(self, text: str) -> Optional[str]:
+        """
+        Extract JSON from text, handling various formats:
+        - Plain JSON
+        - JSON in markdown code blocks (```json ... ```)
+        - JSON with trailing text
+        - Malformed JSON with common issues
+        """
+        # First, try to find JSON in markdown code blocks
+        json_block_pattern = r'```(?:json)?\s*(\{.*?\})\s*```'
+        match = re.search(json_block_pattern, text, re.DOTALL)
+        if match:
+            return match.group(1).strip()
+
+        # Try to find JSON object starting with {
+        json_start = text.find('{')
+        if json_start != -1:
+            # Find the matching closing brace
+            brace_count = 0
+            in_string = False
+            escape_next = False
+            
+            for i in range(json_start, len(text)):
+                char = text[i]
+                
+                if escape_next:
+                    escape_next = False
+                    continue
+                
+                if char == '\\':
+                    escape_next = True
+                    continue
+                
+                if char == '"' and not escape_next:
+                    in_string = not in_string
+                    continue
+                
+                if not in_string:
+                    if char == '{':
+                        brace_count += 1
+                    elif char == '}':
+                        brace_count -= 1
+                        if brace_count == 0:
+                            return text[json_start:i+1]
+        
+        return None
+
+    def fix_common_json_issues(self, json_str: str) -> str:
+        """
+        Attempt to fix common JSON issues:
+        - Unescaped quotes in strings
+        - Unescaped newlines in strings
+        - Trailing commas
+        """
+        # This is a simplified fix - for production, consider using a more robust approach
+        # or asking the AI to regenerate the response
+        
+        # Remove trailing commas before } or ]
+        json_str = re.sub(r',(\s*[}\]])', r'\1', json_str)
+        
+        # Try to fix unescaped newlines in string values (basic approach)
+        # This is tricky because we need to identify string boundaries
+        # For now, we'll rely on the AI to generate proper JSON with response_format
+        
+        return json_str
+
+    def parse_json_response(self, response_text: str, session_id: Optional[int] = None) -> Dict:
+        """
+        Parse JSON from AI response with robust error handling and recovery.
+        
+        Returns:
+            Parsed JSON dictionary
+            
+        Raises:
+            ValueError: If JSON cannot be parsed after all recovery attempts
+        """
+        import os
+        
+        # Step 1: Extract JSON from text
+        cleaned_text = self.extract_json_from_text(response_text)
+        if not cleaned_text:
+            cleaned_text = response_text.strip()
+        
+        # Step 2: Remove markdown code blocks if still present
+        if cleaned_text.startswith("```"):
+            lines = cleaned_text.split("\n")
+            lines = lines[1:]  # Remove first line
+            if lines and lines[-1].strip() == "```":
+                lines = lines[:-1]
+            cleaned_text = "\n".join(lines).strip()
+        
+        # Step 3: Try to parse JSON
+        try:
+            return json.loads(cleaned_text)
+        except json.JSONDecodeError as e:
+            # Step 4: Try to fix common issues
+            try:
+                fixed_text = self.fix_common_json_issues(cleaned_text)
+                return json.loads(fixed_text)
+            except json.JSONDecodeError:
+                pass
+            
+            # Step 5: Log error details
+            print(f"❌ JSON Parse Error: {str(e)}")
+            error_pos = getattr(e, 'pos', 0)
+            start = max(0, error_pos - 200)
+            end = min(len(cleaned_text), error_pos + 200)
+            print(f"Problematic text around error position:")
+            print(f"...{cleaned_text[start:end]}...")
+            
+            # Step 6: Save full response for debugging
+            debug_dir = "/tmp/ai_debug"
+            os.makedirs(debug_dir, exist_ok=True)
+            debug_file = f"{debug_dir}/failed_response_{session_id}.txt"
+            with open(debug_file, "w", encoding="utf-8") as f:
+                f.write(response_text)
+            print(f"💾 Full response saved to: {debug_file}")
+            
+            # Step 7: Try to extract partial JSON (find the largest valid JSON object)
+            # This is a last resort - try to find a valid JSON structure
+            try:
+                # Try to find the items array and parse it
+                items_match = re.search(r'"items"\s*:\s*\[(.*?)\]', cleaned_text, re.DOTALL)
+                if items_match:
+                    # Try to reconstruct a minimal valid JSON
+                    # This is a fallback - not ideal but might work
+                    pass
+            except Exception:
+                pass
+            
+            raise ValueError(f"Failed to parse AI response as JSON: {str(e)}. Response saved to {debug_file}")
 
     async def analyze_transcript(
         self,
         transcript: str,
         db: AsyncSession,
-        session_id: int = None
+        session_id: int = None,
+        retry_count: int = 0,
+        max_retries: int = 1
     ) -> Dict[int, Dict[str, any]]:
         """
         Analyze a transcript and return Yes/No answers for all 10 checklist items.
@@ -207,6 +353,8 @@ Return ONLY valid JSON, no additional text:
             transcript: The full sales call transcript
             db: Database session
             session_id: Optional session ID for storing question analyses
+            retry_count: Internal parameter for retry logic
+            max_retries: Maximum number of retries if JSON parsing fails
 
         Returns:
             Dict mapping item_id to {
@@ -232,7 +380,7 @@ Return ONLY valid JSON, no additional text:
                 messages=[
                     {
                         "role": "system",
-                        "content": "You are an expert sales coach who evaluates sales calls objectively and provides structured feedback. Return ONLY valid JSON with no additional text."
+                        "content": "You are an expert sales coach who evaluates sales calls objectively and provides structured feedback. Return ONLY valid JSON with no additional text. Ensure all string values are properly escaped (use \\\" for quotes, \\n for newlines)."
                     },
                     {
                         "role": "user",
@@ -240,7 +388,7 @@ Return ONLY valid JSON, no additional text:
                     }
                 ],
                 temperature=0.3,  # Lower temperature for more consistent, objective responses
-                max_tokens=4000,  # Increased from default to handle full response
+                max_tokens=8000,  # Large enough for 10 items with detailed question evaluations (~700 tokens/item)
                 response_format={"type": "json_object"}  # Ensure JSON output
             )
 
@@ -252,54 +400,99 @@ Return ONLY valid JSON, no additional text:
             print(result_text[:1000])
             print(f"=== END RAW RESPONSE (total length: {len(result_text)}) ===")
 
-            # Try to extract JSON if it's wrapped in markdown code blocks
-            cleaned_text = result_text.strip()
-            if cleaned_text.startswith("```"):
-                # Remove markdown code blocks
-                lines = cleaned_text.split("\n")
-                # Remove first line (```json or ```)
-                lines = lines[1:]
-                # Remove last line if it's ```
-                if lines and lines[-1].strip() == "```":
-                    lines = lines[:-1]
-                cleaned_text = "\n".join(lines).strip()
-
+            # Use robust JSON parsing with error recovery
             try:
-                result_json = json.loads(cleaned_text)
-            except json.JSONDecodeError as e:
-                print(f"❌ JSON Parse Error: {str(e)}")
-                print(f"Problematic text around error position:")
-                error_pos = e.pos if hasattr(e, 'pos') else 0
-                start = max(0, error_pos - 100)
-                end = min(len(cleaned_text), error_pos + 100)
-                print(f"...{cleaned_text[start:end]}...")
+                result_json = self.parse_json_response(result_text, session_id)
+            except ValueError as parse_error:
+                # If parsing fails and we haven't exceeded retries, ask AI to fix the JSON
+                if retry_count < max_retries:
+                    print(f"⚠️ JSON parsing failed, attempting retry {retry_count + 1}/{max_retries}...")
+                    # Use full response but truncate if too long (keep last 10000 chars if needed)
+                    response_to_fix = result_text if len(result_text) <= 10000 else result_text[-10000:]
+                    fix_prompt = f"""The previous JSON response had parsing errors. Please fix the following JSON to ensure it's valid:
 
-                # Save full response to file for debugging
-                import os
-                debug_dir = "/tmp/ai_debug"
-                os.makedirs(debug_dir, exist_ok=True)
-                debug_file = f"{debug_dir}/failed_response_{session_id}.txt"
-                with open(debug_file, "w") as f:
-                    f.write(result_text)
-                print(f"💾 Full response saved to: {debug_file}")
+{response_to_fix}
 
-                raise ValueError(f"Failed to parse AI response as JSON: {str(e)}. Response saved to {debug_file}")
+CRITICAL REQUIREMENTS:
+- Return ONLY the corrected, valid JSON with no additional text
+- Escape all quotes in strings using \\\" (backslash-double-quote)
+- Escape all newlines in strings using \\n (backslash-n)
+- Ensure all string values are properly escaped
+- Keep evidence_text and reasoning fields short and on single lines when possible
+- MUST include exactly 10 items (item_number 1 through 10)
+- Each item MUST have item_number matching its position (1, 2, 3, ..., 10)
+- Do NOT skip any items"""
+                    
+                    fix_response = await self.client.chat.completions.create(
+                        model=self.model,
+                        messages=[
+                            {
+                                "role": "system",
+                                "content": "You are a JSON repair assistant. Fix the provided JSON to make it valid. Return ONLY valid JSON with no additional text."
+                            },
+                            {
+                                "role": "user",
+                                "content": fix_prompt
+                            }
+                        ],
+                        temperature=0.1,
+                        max_tokens=4000,
+                        response_format={"type": "json_object"}
+                    )
+                    
+                    fixed_text = fix_response.choices[0].message.content
+                    print(f"=== FIXED AI RESPONSE (first 1000 chars) ===")
+                    print(fixed_text[:1000])
+                    print(f"=== END FIXED RESPONSE (total length: {len(fixed_text)}) ===")
+                    
+                    # Try to parse the fixed response
+                    try:
+                        result_json = self.parse_json_response(fixed_text, session_id)
+                    except ValueError as fix_error:
+                        # Even the fixed version failed, raise the original error
+                        raise parse_error
+                else:
+                    # Max retries exceeded, raise the original error
+                    raise parse_error
 
-            # Map results to item IDs
+            # Validate response structure
+            if "items" not in result_json:
+                raise ValueError("AI response missing 'items' array")
+            
+            items_response = result_json["items"]
+            if not isinstance(items_response, list):
+                raise ValueError(f"AI response 'items' is not a list, got {type(items_response)}")
+            
+            if len(items_response) != 10:
+                raise ValueError(f"Expected 10 items in response, got {len(items_response)}. Response may be incomplete.")
+            
+            # Create a map of item_number to item_result for easier lookup
+            items_by_number = {}
+            for item_result in items_response:
+                item_num = item_result.get("item_number")
+                if item_num is None:
+                    raise ValueError("AI response item missing 'item_number' field")
+                items_by_number[item_num] = item_result
+            
+            # Map results to item IDs by matching item_number (1-indexed) with items list index
             analysis_results = {}
-            for idx, item in enumerate(items):
-                item_result = result_json["items"][idx]
+            for idx, item in enumerate(items, start=1):
+                if idx not in items_by_number:
+                    raise ValueError(f"AI response missing item_number {idx} (expected for item: {item.title})")
+                
+                item_result = items_by_number[idx]
                 analysis_results[item.id] = {
-                    "answer": item_result["answer"],
-                    "reasoning": item_result["reasoning"],
+                    "answer": item_result.get("answer", False),
+                    "reasoning": item_result.get("reasoning", "No reasoning provided"),
                     "question_evaluations": item_result.get("question_evaluations", []),
                     "behavioral_framework": behavioral_data_map.get(item.title, {})
                 }
 
             return analysis_results
 
-        except json.JSONDecodeError as e:
-            raise ValueError(f"Failed to parse AI response as JSON: {str(e)}")
+        except ValueError as e:
+            # Re-raise ValueError from parse_json_response
+            raise RuntimeError(f"AI analysis failed: {str(e)}")
         except Exception as e:
             raise RuntimeError(f"AI analysis failed: {str(e)}")
 

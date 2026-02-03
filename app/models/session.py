@@ -60,6 +60,7 @@ class Session(Base, TimestampMixin):
     score_history = relationship("ScoreHistory", back_populates="session", cascade="all, delete-orphan", order_by="desc(ScoreHistory.calculated_at)")
     coaching_feedback = relationship("CoachingFeedback", back_populates="session", uselist=False, cascade="all, delete-orphan")
     report = relationship("Report", back_populates="session", uselist=False, cascade="all, delete-orphan")
+    manager_notes = relationship("ManagerNote", back_populates="session", cascade="all, delete-orphan", order_by="desc(ManagerNote.created_at)")
 
     @property
     def requires_audio(self) -> bool:

@@ -246,18 +246,8 @@ async def create_session(
 
     User ID should come from authenticated JWT token.
     """
-    # Verify user exists
-    user_result = await db.execute(
-        select(User).where(User.id == user_id)
-    )
-    user = user_result.scalar_one_or_none()
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found"
-        )
-
-    # Create session
+    # Note: User already validated by JWT authentication dependency (get_current_user_id)
+    # No need for redundant database check
     from app.models.session import SessionMode
 
     # Convert lowercase session_mode to uppercase for enum
