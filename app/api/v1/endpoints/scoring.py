@@ -183,7 +183,7 @@ async def calculate_session_score(
         calculated_at=datetime.utcnow(),
         score_change=score_change,
         trigger_event="manual_calculation" if previous_result else "initial_calculation",
-        created_by_user_id=user_id
+        created_by_user_id=current_user.id
     )
 
     db.add(score_history_entry)

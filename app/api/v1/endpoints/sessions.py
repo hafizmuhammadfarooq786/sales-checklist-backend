@@ -183,14 +183,44 @@ async def generate_coaching_in_background(session_id: int, total_score: float, r
 
             responses_data = []
             for resp in responses:
+                # Ensure item is loaded
+                if not resp.item:
+                    logger.warning(f"SessionResponse {resp.id} has no item loaded for session {session_id}")
+                    continue
+                    
+                # Ensure category is loaded
+                if not resp.item.category:
+                    logger.warning(f"ChecklistItem {resp.item.id} has no category loaded for session {session_id}")
+                    continue
+                
+                # Get item title - use a fallback if title is None or empty
+                item_title = resp.item.title
+                if not item_title or item_title.strip() == '':
+                    logger.warning(f"ChecklistItem {resp.item.id} has no title, using fallback")
+                    item_title = f"Checklist Item {resp.item.id}"
+                
+                # Determine final answer: user_answer takes precedence over ai_answer
+                # user_answer if not None, otherwise ai_answer
+                final_answer = resp.user_answer if resp.user_answer is not None else resp.ai_answer
+                
                 responses_data.append({
                     "id": resp.id,
                     "item_id": resp.item_id,
-                    "ai_reasoning": resp.ai_reasoning,
+                    "is_validated": final_answer,  # True = Yes, False = No
+                    "ai_answer": resp.ai_answer,
+                    "user_answer": resp.user_answer,
+                    "confidence": getattr(resp, 'confidence', None),
+                    "evidence_text": getattr(resp, 'evidence_text', None),
+                    "ai_reasoning": getattr(resp, 'ai_reasoning', None),
                     "item": {
-                        "id": resp.item_id,
-                        "coaching_questions": resp.item.coaching_questions,
-                        "definition": resp.item.definition
+                        "id": resp.item.id,
+                        "title": item_title,
+                        "order": getattr(resp.item, 'order', resp.item_id),
+                        "definition": getattr(resp.item, 'definition', '') or '',
+                        "category": {
+                            "id": resp.item.category.id,
+                            "name": resp.item.category.name or 'Uncategorized',
+                        }
                     }
                 })
 
@@ -206,9 +236,31 @@ async def generate_coaching_in_background(session_id: int, total_score: float, r
             )
 
             # Save or update report record
+            # Store only the S3 key (not the full URL) for proper presigned URL generation
+            s3_key = pdf_result.get('s3_key') or pdf_result.get('pdf_url')
+            
+            # If s3_key is a full URL, extract just the key part
+            if s3_key and s3_key.startswith('http'):
+                # Extract key from URL like: https://bucket.s3.region.amazonaws.com/key/path
+                try:
+                    if '.s3.' in s3_key:
+                        # Extract everything after the bucket name
+                        parts = s3_key.split('.s3.')
+                        if len(parts) > 1:
+                            key_part = parts[1].split('/', 1)
+                            if len(key_part) > 1:
+                                s3_key = key_part[1]  # Get the key path
+                            else:
+                                # Fallback: try to extract from URL path
+                                from urllib.parse import urlparse
+                                parsed = urlparse(s3_key)
+                                s3_key = parsed.path.lstrip('/')
+                except Exception as e:
+                    logger.warning(f"Failed to extract S3 key from URL {s3_key}: {e}")
+            
             if existing_report:
                 existing_report.pdf_s3_bucket = pdf_result.get('s3_bucket')
-                existing_report.pdf_s3_key = pdf_result.get('s3_key') if pdf_result.get('s3_key') else pdf_result.get('pdf_url')
+                existing_report.pdf_s3_key = s3_key  # Store only the key, not the full URL
                 existing_report.pdf_file_size = pdf_result.get('file_size')
                 existing_report.generated_at = datetime.utcnow()
                 existing_report.is_generated = True
@@ -216,7 +268,7 @@ async def generate_coaching_in_background(session_id: int, total_score: float, r
                 report = Report(
                     session_id=session_id,
                     pdf_s3_bucket=pdf_result.get('s3_bucket'),
-                    pdf_s3_key=pdf_result.get('s3_key') if pdf_result.get('s3_key') else pdf_result.get('pdf_url'),
+                    pdf_s3_key=s3_key,  # Store only the key, not the full URL
                     pdf_file_size=pdf_result.get('file_size'),
                     generated_at=datetime.utcnow(),
                     is_generated=True
@@ -908,20 +960,35 @@ async def submit_checklist(
             opportunity_name=session.opportunity_name or ""
         )
 
-        # Save coaching to database
-        coaching_feedback = CoachingFeedback(
-            session_id=session_id,
-            feedback_text=feedback_data['feedback_text'],
-            strengths=feedback_data.get('strengths'),
-            improvement_areas=feedback_data.get('improvement_areas'),
-            action_items=feedback_data.get('action_items'),
-            audio_s3_bucket=None,  # Audio generation can be done later via separate endpoint
-            audio_s3_key=None,
-            audio_duration=None,
-            generated_at=datetime.utcnow()
+        # Check if coaching feedback already exists for this session
+        existing_coaching_result = await db.execute(
+            select(CoachingFeedback).where(CoachingFeedback.session_id == session_id)
         )
+        existing_coaching = existing_coaching_result.scalar_one_or_none()
 
-        db.add(coaching_feedback)
+        if existing_coaching:
+            # Update existing coaching feedback
+            existing_coaching.feedback_text = feedback_data['feedback_text']
+            existing_coaching.strengths = feedback_data.get('strengths')
+            existing_coaching.improvement_areas = feedback_data.get('improvement_areas')
+            existing_coaching.action_items = feedback_data.get('action_items')
+            existing_coaching.generated_at = datetime.utcnow()
+            coaching_feedback = existing_coaching
+        else:
+            # Create new coaching feedback
+            coaching_feedback = CoachingFeedback(
+                session_id=session_id,
+                feedback_text=feedback_data['feedback_text'],
+                strengths=feedback_data.get('strengths'),
+                improvement_areas=feedback_data.get('improvement_areas'),
+                action_items=feedback_data.get('action_items'),
+                audio_s3_bucket=None,  # Audio generation can be done later via separate endpoint
+                audio_s3_key=None,
+                audio_duration=None,
+                generated_at=datetime.utcnow()
+            )
+            db.add(coaching_feedback)
+
         await db.commit()
         await db.refresh(coaching_feedback)
 
