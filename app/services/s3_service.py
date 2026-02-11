@@ -117,6 +117,50 @@ class S3Service:
             logger.error(f"Failed to upload file object to S3: {e}")
             raise Exception(f"S3 upload failed: {str(e)}")
 
+    async def upload_bytes(
+        self,
+        file_bytes: bytes,
+        s3_key: str,
+        content_type: Optional[str] = None,
+    ) -> str:
+        """
+        Upload bytes directly to S3
+
+        Args:
+            file_bytes: Bytes to upload
+            s3_key: S3 object key (path in bucket)
+            content_type: MIME type of the file
+
+        Returns:
+            S3 key of the uploaded file
+
+        Raises:
+            Exception: If upload fails
+        """
+        from io import BytesIO
+        try:
+            extra_args = {}
+            if content_type:
+                extra_args["ContentType"] = content_type
+
+            # Convert bytes to file-like object
+            file_obj = BytesIO(file_bytes)
+
+            # Upload file object
+            self.s3_client.upload_fileobj(
+                file_obj,
+                self.bucket_name,
+                s3_key,
+                ExtraArgs=extra_args,
+            )
+
+            logger.info(f"Successfully uploaded bytes to S3: {s3_key}")
+            return s3_key
+
+        except ClientError as e:
+            logger.error(f"Failed to upload bytes to S3: {e}")
+            raise Exception(f"S3 upload failed: {str(e)}")
+
     def delete_file(self, s3_key: str) -> bool:
         """
         Delete a file from S3
