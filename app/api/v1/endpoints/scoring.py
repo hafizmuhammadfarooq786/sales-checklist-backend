@@ -123,16 +123,19 @@ async def calculate_session_score(
     # Calculate percentage
     percentage_score = (total_score / max_possible_score * 100) if max_possible_score > 0 else 0
 
-    # Determine risk band
-    if percentage_score >= 80:
+    # Determine risk band based on new thresholds
+    # 70-100: Low Risk (Green)
+    # 40-69: Medium Risk (Yellow)
+    # 0-39: Critical Risk (Red)
+    if percentage_score >= 70:
         risk_band = "green"
-        risk_label = "Healthy"
-    elif percentage_score >= 60:
-        risk_band = "yellow" 
-        risk_label = "Caution"
+        risk_label = "Low Risk"
+    elif percentage_score >= 40:
+        risk_band = "yellow"
+        risk_label = "Medium Risk"
     else:
         risk_band = "red"
-        risk_label = "At Risk"
+        risk_label = "Critical Risk"
 
     # Get top 3 strengths (highest scoring items)
     strengths = sorted(validated_items, key=lambda x: x["score"], reverse=True)[:3]

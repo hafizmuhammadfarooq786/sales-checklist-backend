@@ -792,10 +792,13 @@ async def submit_manual_checklist(
     # Calculate total score
     total_score = sum(r.score for r in response_records)
 
-    # Determine risk band
-    if total_score >= 80:
+    # Determine risk band based on new thresholds
+    # 70-100: Low Risk (Green)
+    # 40-69: Medium Risk (Yellow)
+    # 0-39: Critical Risk (Red)
+    if total_score >= 70:
         risk_band = RiskBand.GREEN
-    elif total_score >= 60:
+    elif total_score >= 40:
         risk_band = RiskBand.YELLOW
     else:
         risk_band = RiskBand.RED
@@ -897,10 +900,13 @@ async def submit_checklist(
         else:
             items_no += 1
 
-    # Determine risk band based on score
-    if total_score >= 80:
+    # Determine risk band based on score (new thresholds)
+    # 70-100: Low Risk (Green)
+    # 40-69: Medium Risk (Yellow)
+    # 0-39: Critical Risk (Red)
+    if total_score >= 70:
         risk_band = RiskBand.GREEN
-    elif total_score >= 60:
+    elif total_score >= 40:
         risk_band = RiskBand.YELLOW
     else:
         risk_band = RiskBand.RED

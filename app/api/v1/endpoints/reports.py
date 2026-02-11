@@ -215,10 +215,13 @@ async def generate_report(
     max_possible_score = len(responses) * 10
     percentage_score = (total_score / max_possible_score * 100) if max_possible_score > 0 else 0
 
-    # Determine risk band
-    if percentage_score >= 80:
+    # Determine risk band based on new thresholds
+    # 70-100: Low Risk (Green)
+    # 40-69: Medium Risk (Yellow)
+    # 0-39: Critical Risk (Red)
+    if percentage_score >= 70:
         risk_band = RiskBand.GREEN
-    elif percentage_score >= 60:
+    elif percentage_score >= 40:
         risk_band = RiskBand.YELLOW
     else:
         risk_band = RiskBand.RED

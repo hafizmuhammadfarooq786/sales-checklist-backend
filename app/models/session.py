@@ -26,6 +26,20 @@ class SessionStatus(str, enum.Enum):
     FAILED = "failed"  # Error occurred
 
 
+class DealStage(str, enum.Enum):
+    """Deal/Checklist status tracking"""
+    ACTIVE = "active"  # Actively working on the deal
+    PROSPECT = "prospect"  # Initial contact/qualification
+    QUALIFIED = "qualified"  # Qualified opportunity
+    PROPOSAL = "proposal"  # Proposal submitted
+    NEGOTIATION = "negotiation"  # In negotiation
+    WON = "won"  # Deal won
+    LOST = "lost"  # Deal lost
+    NO_DECISION = "no_decision"  # Customer made no decision
+    DISENGAGED = "disengaged"  # Customer stopped responding/lost interest
+    ON_HOLD = "on_hold"  # Deal temporarily on hold
+
+
 class Session(Base, TimestampMixin):
     """
     Sales call session - main entity
@@ -39,7 +53,7 @@ class Session(Base, TimestampMixin):
     customer_name = Column(String(255), nullable=False)
     opportunity_name = Column(String(255), nullable=True)
     decision_influencer = Column(String(255), nullable=True)
-    deal_stage = Column(String(100), nullable=True)
+    deal_stage = Column(SQLEnum(DealStage), nullable=True)
 
     # Session mode (audio vs manual entry)
     session_mode = Column(SQLEnum(SessionMode), default=SessionMode.AUDIO, nullable=False)

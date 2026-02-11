@@ -4,7 +4,7 @@ Pydantic schemas for Session endpoints
 from pydantic import BaseModel, Field, field_serializer
 from typing import Optional, List, Literal
 from datetime import datetime
-from app.models.session import SessionStatus, SessionMode
+from app.models.session import SessionStatus, SessionMode, DealStage
 
 
 class SessionCreate(BaseModel):
@@ -12,7 +12,7 @@ class SessionCreate(BaseModel):
     customer_name: str = Field(..., min_length=1, max_length=255)
     opportunity_name: Optional[str] = Field(None, max_length=255)
     decision_influencer: Optional[str] = Field(None, max_length=255)
-    deal_stage: Optional[str] = Field(None, max_length=100)
+    deal_stage: Optional[DealStage] = None
     session_mode: Literal["audio", "manual"] = Field(
         default="audio",
         description="Session input mode: 'audio' (record audio) or 'manual' (fill checklist manually)"
@@ -24,7 +24,7 @@ class SessionUpdate(BaseModel):
     customer_name: Optional[str] = Field(None, max_length=255)
     opportunity_name: Optional[str] = Field(None, max_length=255)
     decision_influencer: Optional[str] = Field(None, max_length=255)
-    deal_stage: Optional[str] = Field(None, max_length=100)
+    deal_stage: Optional[DealStage] = None
     status: Optional[SessionStatus] = None
 
 
@@ -35,7 +35,7 @@ class SessionResponse(BaseModel):
     customer_name: str
     opportunity_name: Optional[str] = None
     decision_influencer: Optional[str] = None
-    deal_stage: Optional[str] = None
+    deal_stage: Optional[DealStage] = None
     session_mode: SessionMode
     status: SessionStatus
     submitted_at: Optional[datetime] = None
@@ -47,6 +47,11 @@ class SessionResponse(BaseModel):
     @field_serializer('session_mode')
     def serialize_session_mode(self, value: SessionMode) -> str:
         return value.value.lower()
+
+    # Convert deal_stage enum to lowercase value
+    @field_serializer('deal_stage')
+    def serialize_deal_stage(self, value: Optional[DealStage]) -> Optional[str]:
+        return value.value if value else None
 
     class Config:
         from_attributes = True
