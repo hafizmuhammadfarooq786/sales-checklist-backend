@@ -116,6 +116,25 @@ class DashboardStats(BaseModel):
         from_attributes = True
 
 
+class TeamTrainingGaps(BaseModel):
+    """Team training gaps summary"""
+    top_missing_items: List[MissingItemAnalysis]
+
+    class Config:
+        from_attributes = True
+
+
+class ManagerDashboardOverview(BaseModel):
+    """Complete manager dashboard overview"""
+    stats: DashboardStats
+    notifications: DashboardNotifications
+    active_checklists: List[ActiveChecklist]
+    team_training_gaps: TeamTrainingGaps
+
+    class Config:
+        from_attributes = True
+
+
 # Helper Functions
 def can_view_team_data(user: User) -> bool:
     """Check if user can view team data (Manager or Admin)"""
@@ -639,4 +658,297 @@ async def get_team_no_summary(
         total_no_responses=total_no_responses,
         no_percentage=round(no_percentage, 1),
         top_missing_items=top_missing_items
+    )
+
+
+@router.get("/overview", response_model=ManagerDashboardOverview)
+async def get_dashboard_overview(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    sort_by: str = Query("updated_at", regex="^(updated_at|created_at|score|salesperson)$"),
+    order: str = Query("desc", regex="^(asc|desc)$")
+):
+    """
+    Get complete manager dashboard overview in a single request
+
+    Returns all dashboard data:
+    - Stats (active checklists, team members, average score, alerts)
+    - Notifications (stalled, at-risk, high-score lost deals)
+    - Active checklists (with sorting support)
+    - Team training gaps (top missing items)
+
+    **Query Parameters:**
+    - sort_by: Field to sort active checklists by (updated_at, created_at, score, salesperson)
+    - order: Sort order (asc, desc)
+
+    **Permissions:**
+    - MANAGER: Team overview
+    - ADMIN: Organization overview
+    - SYSTEM_ADMIN: All overview
+    """
+    if not can_view_team_data(current_user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only managers and admins can access dashboard overview"
+        )
+
+    team_member_ids = await get_team_members(current_user, db)
+
+    # 1. Get Stats
+    # Count active checklists
+    active_result = await db.execute(
+        select(func.count(Session.id)).where(
+            and_(
+                Session.user_id.in_(team_member_ids),
+                Session.status.in_([
+                    SessionStatus.PENDING_REVIEW,
+                    SessionStatus.COMPLETED
+                ])
+            )
+        )
+    )
+    total_active = active_result.scalar() or 0
+
+    # Average team score
+    score_result = await db.execute(
+        select(func.avg(ScoringResult.total_score)).where(
+            and_(
+                ScoringResult.session_id == Session.id,
+                Session.user_id.in_(team_member_ids)
+            )
+        )
+    )
+    avg_score = score_result.scalar()
+
+    # Count alerts (will be recalculated in notifications, but needed for stats)
+    stalled_count = await db.execute(
+        select(func.count(Session.id)).where(
+            and_(
+                Session.user_id.in_(team_member_ids),
+                Session.updated_at < datetime.utcnow() - timedelta(days=30),
+                Session.status != SessionStatus.COMPLETED
+            )
+        )
+    )
+
+    at_risk_count = await db.execute(
+        select(func.count(Session.id)).where(
+            and_(
+                Session.user_id.in_(team_member_ids),
+                Session.id == ScoringResult.session_id,
+                ScoringResult.total_score <= 30
+            )
+        )
+    )
+
+    total_alerts = (stalled_count.scalar() or 0) + (at_risk_count.scalar() or 0)
+
+    stats = DashboardStats(
+        total_active_checklists=total_active,
+        total_team_members=len(team_member_ids),
+        average_team_score=round(avg_score, 1) if avg_score else None,
+        total_alerts=total_alerts
+    )
+
+    # 2. Get Notifications
+    # Stalled deals (30+ days inactive)
+    stalled_result = await db.execute(
+        select(Session, User, ScoringResult).where(
+            and_(
+                Session.user_id.in_(team_member_ids),
+                Session.updated_at < datetime.utcnow() - timedelta(days=30),
+                Session.status != SessionStatus.COMPLETED,
+                Session.user_id == User.id
+            )
+        ).outerjoin(ScoringResult, Session.id == ScoringResult.session_id)
+        .order_by(Session.updated_at.asc())
+        .limit(50)
+    )
+
+    stalled_deals = []
+    for session, user, scoring in stalled_result:
+        days_inactive = (datetime.utcnow() - session.updated_at).days
+        stalled_deals.append(DealAlert(
+            session_id=session.id,
+            customer_name=session.customer_name,
+            salesperson_name=f"{user.first_name or ''} {user.last_name or ''}".strip() or user.email,
+            salesperson_id=user.id,
+            alert_type="stalled",
+            score=scoring.total_score if scoring else None,
+            days_inactive=days_inactive,
+            deal_stage=session.deal_stage,
+            last_updated=session.updated_at
+        ))
+
+    # At-risk deals (scores 0-30)
+    at_risk_result = await db.execute(
+        select(Session, User, ScoringResult).where(
+            and_(
+                Session.user_id.in_(team_member_ids),
+                Session.id == ScoringResult.session_id,
+                ScoringResult.total_score <= 30,
+                Session.user_id == User.id
+            )
+        ).order_by(ScoringResult.total_score.asc())
+        .limit(50)
+    )
+
+    at_risk_deals = []
+    for session, user, scoring in at_risk_result:
+        at_risk_deals.append(DealAlert(
+            session_id=session.id,
+            customer_name=session.customer_name,
+            salesperson_name=f"{user.first_name or ''} {user.last_name or ''}".strip() or user.email,
+            salesperson_id=user.id,
+            alert_type="at_risk",
+            score=scoring.total_score,
+            deal_stage=session.deal_stage,
+            last_updated=session.updated_at
+        ))
+
+    # High-scoring lost deals (70+ but lost/no decision/disengaged)
+    try:
+        high_score_lost_result = await db.execute(
+            select(Session, User, ScoringResult).where(
+                and_(
+                    Session.user_id.in_(team_member_ids),
+                    Session.id == ScoringResult.session_id,
+                    ScoringResult.total_score >= 70,
+                    Session.deal_stage.in_([DealStage.LOST, DealStage.NO_DECISION, DealStage.DISENGAGED]),
+                    Session.user_id == User.id
+                )
+            ).order_by(desc(ScoringResult.total_score))
+            .limit(50)
+        )
+    except Exception as e:
+        # If DISENGAGED is not in the database enum yet, rollback and query without it
+        if "DISENGAGED" in str(e) or "disengaged" in str(e) or "InFailedSQLTransactionError" in str(e):
+            logger.warning("DISENGAGED enum value not found in database, querying without it. Run migration 0090406d8bf9.")
+            await db.rollback()
+            high_score_lost_result = await db.execute(
+                select(Session, User, ScoringResult).where(
+                    and_(
+                        Session.user_id.in_(team_member_ids),
+                        Session.id == ScoringResult.session_id,
+                        ScoringResult.total_score >= 70,
+                        Session.deal_stage.in_([DealStage.LOST, DealStage.NO_DECISION]),
+                        Session.user_id == User.id
+                    )
+                ).order_by(desc(ScoringResult.total_score))
+                .limit(50)
+            )
+        else:
+            raise
+
+    high_score_lost_deals = []
+    for session, user, scoring in high_score_lost_result:
+        high_score_lost_deals.append(DealAlert(
+            session_id=session.id,
+            customer_name=session.customer_name,
+            salesperson_name=f"{user.first_name or ''} {user.last_name or ''}".strip() or user.email,
+            salesperson_id=user.id,
+            alert_type="high_score_lost",
+            score=scoring.total_score,
+            deal_stage=session.deal_stage,
+            last_updated=session.updated_at
+        ))
+
+    notifications = DashboardNotifications(
+        stalled_deals=stalled_deals,
+        at_risk_deals=at_risk_deals,
+        high_score_lost_deals=high_score_lost_deals,
+        total_alerts=len(stalled_deals) + len(at_risk_deals) + len(high_score_lost_deals)
+    )
+
+    # 3. Get Active Checklists (with sorting)
+    query = (
+        select(Session, User, ScoringResult)
+        .where(
+            and_(
+                Session.user_id.in_(team_member_ids),
+                Session.status.in_([
+                    SessionStatus.PENDING_REVIEW,
+                    SessionStatus.COMPLETED
+                ]),
+                Session.user_id == User.id
+            )
+        )
+        .outerjoin(ScoringResult, Session.id == ScoringResult.session_id)
+    )
+
+    # Apply sorting
+    if sort_by == "updated_at":
+        query = query.order_by(desc(Session.updated_at) if order == "desc" else Session.updated_at)
+    elif sort_by == "created_at":
+        query = query.order_by(desc(Session.created_at) if order == "desc" else Session.created_at)
+    elif sort_by == "score":
+        query = query.order_by(desc(ScoringResult.total_score) if order == "desc" else ScoringResult.total_score)
+    elif sort_by == "salesperson":
+        query = query.order_by(desc(User.email) if order == "desc" else User.email)
+
+    result = await db.execute(query)
+
+    active_checklists = []
+    for session, user, scoring in result:
+        active_checklists.append(ActiveChecklist(
+            session_id=session.id,
+            customer_name=session.customer_name,
+            opportunity_name=session.opportunity_name,
+            salesperson_name=f"{user.first_name or ''} {user.last_name or ''}".strip() or user.email,
+            salesperson_id=user.id,
+            score=scoring.total_score if scoring else None,
+            status=session.status.value,
+            deal_stage=session.deal_stage,
+            created_at=session.created_at,
+            updated_at=session.updated_at
+        ))
+
+    # 4. Get Team Training Gaps (top missing items)
+    total_sessions_result = await db.execute(
+        select(func.count(Session.id)).where(Session.user_id.in_(team_member_ids))
+    )
+    total_sessions = total_sessions_result.scalar() or 0
+
+    # Get top 3 missing items
+    top_missing_result = await db.execute(
+        select(
+            ChecklistItem.id,
+            ChecklistItem.title.label('item_text'),
+            ChecklistCategory.name.label('category_name'),
+            func.count(SessionResponse.id).label('missing_count')
+        ).join(
+            ChecklistCategory, ChecklistItem.category_id == ChecklistCategory.id
+        ).where(
+            and_(
+                SessionResponse.session_id == Session.id,
+                Session.user_id.in_(team_member_ids),
+                SessionResponse.item_id == ChecklistItem.id,
+                SessionResponse.ai_answer == False
+            )
+        ).group_by(ChecklistItem.id, ChecklistItem.title, ChecklistCategory.name)
+        .order_by(desc(func.count(SessionResponse.id)))
+        .limit(3)
+    )
+
+    top_missing_items = []
+    for item_id, item_text, category_name, missing_count in top_missing_result:
+        missing_percentage = (missing_count / total_sessions * 100) if total_sessions > 0 else 0
+        top_missing_items.append(MissingItemAnalysis(
+            item_id=item_id,
+            item_text=item_text,
+            category_name=category_name,
+            missing_count=missing_count,
+            total_sessions=total_sessions,
+            missing_percentage=round(missing_percentage, 1)
+        ))
+
+    team_training_gaps = TeamTrainingGaps(
+        top_missing_items=top_missing_items
+    )
+
+    return ManagerDashboardOverview(
+        stats=stats,
+        notifications=notifications,
+        active_checklists=active_checklists,
+        team_training_gaps=team_training_gaps
     )
