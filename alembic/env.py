@@ -3,6 +3,12 @@ Alembic environment configuration for async SQLAlchemy
 """
 from logging.config import fileConfig
 import asyncio
+import sys
+from pathlib import Path
+
+# Add the project root to Python path
+project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(project_root))
 
 from sqlalchemy import pool
 from sqlalchemy.engine import Connection

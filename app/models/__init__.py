@@ -19,6 +19,7 @@ from app.models.scoring import ScoringResult, CoachingFeedback, RiskBand, ScoreH
 from app.models.report import Report, ReportFormat
 from app.models.invitation import Invitation
 from app.models.organization_settings import OrganizationSettings
+from app.models.manager_note import ManagerNote
 
 # Export all for easy imports
 __all__ = [
@@ -47,4 +48,5 @@ __all__ = [
     "ReportFormat",
     "Invitation",
     "OrganizationSettings",
+    "ManagerNote",
 ]

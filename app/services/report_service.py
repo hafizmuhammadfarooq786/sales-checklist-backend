@@ -4,6 +4,7 @@ Generates PDF reports for sales sessions using ReportLab
 """
 import os
 import tempfile
+import re
 from datetime import datetime
 from typing import Dict, Any, Optional, List
 from io import BytesIO
@@ -31,6 +32,43 @@ class ReportService:
         """Initialize report service"""
         self.styles = getSampleStyleSheet()
         self._setup_custom_styles()
+
+    def _sanitize_filename(self, name: str) -> str:
+        """
+        Sanitize a string to be used as a filename.
+        Removes or replaces invalid characters, limits length.
+        
+        Args:
+            name: Original name string
+            
+        Returns:
+            Sanitized filename-safe string
+        """
+        if not name:
+            return "report"
+        
+        # Remove leading/trailing whitespace
+        name = name.strip()
+        
+        # Replace spaces with underscores
+        name = name.replace(' ', '_')
+        
+        # Remove or replace invalid filename characters
+        # Keep only alphanumeric, underscores, hyphens, and dots
+        name = re.sub(r'[^a-zA-Z0-9_\-.]', '', name)
+        
+        # Remove multiple consecutive underscores
+        name = re.sub(r'_+', '_', name)
+        
+        # Limit length to 50 characters
+        if len(name) > 50:
+            name = name[:50]
+        
+        # If empty after sanitization, use default
+        if not name:
+            return "report"
+        
+        return name
 
     def _setup_custom_styles(self):
         """Setup custom paragraph styles"""
@@ -113,6 +151,10 @@ class ReportService:
         try:
             print(f"Generating PDF report for session {session_id}")
 
+            # Get customer name for PDF title
+            customer_name = session_data.get('customer_name', 'Report')
+            pdf_title = f"The Sales Checklist Report - {customer_name}" if customer_name else "The Sales Checklist Report"
+
             # Create PDF in memory
             buffer = BytesIO()
             doc = SimpleDocTemplate(
@@ -121,18 +163,17 @@ class ReportService:
                 rightMargin=0.75*inch,
                 leftMargin=0.75*inch,
                 topMargin=0.75*inch,
-                bottomMargin=0.75*inch
+                bottomMargin=0.75*inch,
+                title=pdf_title,
+                author="The Sales Checklist"
             )
 
             # Build report content
             story = []
             story.extend(self._build_header(session_data, scoring_data))
             story.extend(self._build_score_summary(scoring_data))
-            story.extend(self._build_category_breakdown(scoring_data))
-
-            if coaching_data:
-                story.extend(self._build_coaching_section(coaching_data))
-
+            
+            # Only show checklist details (coaching feedback removed per user request)
             if responses_data:
                 story.extend(self._build_checklist_details(responses_data))
 
@@ -152,9 +193,14 @@ class ReportService:
 
             file_size = len(pdf_bytes)
 
+            # Get customer name for filename
+            customer_name = session_data.get('customer_name', '')
+            sanitized_name = self._sanitize_filename(customer_name)
+            
             # Upload to S3
             timestamp = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
-            s3_key = f"reports/{user_id}/{session_id}/report_{timestamp}.pdf"
+            filename = f"{sanitized_name}_{timestamp}.pdf"
+            s3_key = f"reports/{user_id}/{session_id}/{filename}"
 
             try:
                 s3_service = get_s3_service()
@@ -164,13 +210,18 @@ class ReportService:
                     content_type="application/pdf",
                     bucket_name=settings.S3_BUCKET_REPORTS
                 )
+                
+                # Verify the file was actually uploaded
+                # Note: We'll trust the upload succeeded if no exception was raised
+                # The presigned URL generation will fail if the file doesn't exist
                 storage_type = "s3"
+                print(f"Successfully uploaded report to S3: {s3_key}")
             except Exception as s3_error:
                 print(f"S3 upload failed, using local storage: {s3_error}")
                 # Fall back to local storage
                 local_dir = f"uploads/reports/{user_id}/{session_id}"
                 os.makedirs(local_dir, exist_ok=True)
-                local_path = f"{local_dir}/report_{timestamp}.pdf"
+                local_path = f"{local_dir}/{filename}"
 
                 import shutil
                 shutil.copy(temp_file.name, local_path)
@@ -250,10 +301,11 @@ class ReportService:
         return elements
 
     def _build_score_summary(self, scoring_data: Dict[str, Any]) -> List:
-        """Build score summary section"""
+        """Build score summary section - centered score and health status"""
         elements = []
 
         elements.append(Paragraph("Overall Score", self.styles['SectionHeader']))
+        elements.append(Spacer(1, 20))
 
         score = scoring_data.get('total_score', 0)
         risk_band = scoring_data.get('risk_band', 'red')
@@ -272,210 +324,105 @@ class ReportService:
 
         score_color = band_colors.get(risk_band, colors.gray)
 
-        # Score display
+        # Build centered score display
+        score_text = f"{score:.0f}/100"
+        risk_text = f"<b>{band_labels.get(risk_band, 'Unknown').upper()}</b>"
+        
+        # Score style - centered
         score_style = ParagraphStyle(
             'DynamicScore',
-            parent=self.styles['ScoreDisplay'],
-            textColor=score_color
+            parent=self.styles['Normal'],
+            fontSize=48,
+            alignment=1,  # Center
+            textColor=score_color,
+            spaceAfter=15,  # Space between score and health label
+            leading=56,
+            spaceBefore=0
         )
-        elements.append(Paragraph(f"{score:.0f}/100", score_style))
-
-        # Risk band label
+        
+        # Health label style - centered
         band_style = ParagraphStyle(
             'BandLabel',
             parent=self.styles['Normal'],
             fontSize=16,
-            alignment=1,
-            textColor=score_color
+            alignment=1,  # Center
+            textColor=score_color,
+            spaceBefore=0,
+            spaceAfter=0,
+            leading=20
         )
-        elements.append(Paragraph(
-            f"<b>{band_labels.get(risk_band, 'Unknown').upper()}</b>",
-            band_style
-        ))
 
-        elements.append(Spacer(1, 15))
-
-        # Stats row
-        validated = scoring_data.get('items_validated', 0)
-        total = scoring_data.get('items_total', 92)
-
-        stats_data = [[
-            f"Items Validated: {validated}/{total}",
-            f"Completion: {validated/total*100:.0f}%" if total > 0 else "0%"
-        ]]
-
-        stats_table = Table(stats_data, colWidths=[3.5*inch, 3.5*inch])
-        stats_table.setStyle(TableStyle([
-            ('FONTNAME', (0, 0), (-1, -1), 'Helvetica'),
-            ('FONTSIZE', (0, 0), (-1, -1), 12),
-            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-            ('TEXTCOLOR', (0, 0), (-1, -1), colors.HexColor('#4a4a6a')),
-        ]))
-        elements.append(stats_table)
-
-        elements.append(Spacer(1, 10))
-
-        # Strengths and Gaps
-        strengths = scoring_data.get('top_strengths', [])
-        gaps = scoring_data.get('top_gaps', [])
-
-        if strengths or gaps:
-            sg_data = [['Top Strengths', 'Areas for Improvement']]
-
-            max_items = max(len(strengths), len(gaps))
-            for i in range(max_items):
-                strength = strengths[i] if i < len(strengths) else ''
-                gap = gaps[i] if i < len(gaps) else ''
-                sg_data.append([f"+ {strength}" if strength else '', f"- {gap}" if gap else ''])
-
-            sg_table = Table(sg_data, colWidths=[3.5*inch, 3.5*inch])
-            sg_table.setStyle(TableStyle([
-                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                ('FONTSIZE', (0, 0), (-1, -1), 10),
-                ('TEXTCOLOR', (0, 0), (0, 0), colors.HexColor('#27ae60')),
-                ('TEXTCOLOR', (1, 0), (1, 0), colors.HexColor('#e74c3c')),
-                ('TEXTCOLOR', (0, 1), (0, -1), colors.HexColor('#27ae60')),
-                ('TEXTCOLOR', (1, 1), (1, -1), colors.HexColor('#e74c3c')),
-                ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
-                ('TOPPADDING', (0, 0), (-1, -1), 6),
-                ('VALIGN', (0, 0), (-1, -1), 'TOP'),
-            ]))
-            elements.append(sg_table)
-
-        return elements
-
-    def _build_category_breakdown(self, scoring_data: Dict[str, Any]) -> List:
-        """Build category breakdown section"""
-        elements = []
-
+        # Add centered score and health label
+        elements.append(Paragraph(score_text, score_style))
+        elements.append(Paragraph(risk_text, band_style))
         elements.append(Spacer(1, 20))
-        elements.append(Paragraph("Category Breakdown", self.styles['SectionHeader']))
-
-        category_scores = scoring_data.get('category_scores', {})
-
-        if not category_scores:
-            elements.append(Paragraph(
-                "No category data available.",
-                self.styles['BodyText']
-            ))
-            return elements
-
-        # Build category table
-        table_data = [['Category', 'Score', 'Status']]
-
-        for cat_id, cat_data in category_scores.items():
-            if isinstance(cat_data, dict):
-                name = cat_data.get('name', f'Category {cat_id}')
-                score = cat_data.get('score', 0)
-                max_score = cat_data.get('max_score', 100)
-                percentage = (score / max_score * 100) if max_score > 0 else 0
-
-                if percentage >= 80:
-                    status = 'Excellent'
-                elif percentage >= 60:
-                    status = 'Good'
-                elif percentage >= 40:
-                    status = 'Fair'
-                else:
-                    status = 'Needs Work'
-
-                table_data.append([name, f"{percentage:.0f}%", status])
-
-        cat_table = Table(table_data, colWidths=[3.5*inch, 1.5*inch, 2*inch])
-        cat_table.setStyle(TableStyle([
-            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-            ('FONTSIZE', (0, 0), (-1, -1), 10),
-            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#667eea')),
-            ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
-            ('ALIGN', (1, 0), (-1, -1), 'CENTER'),
-            ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
-            ('TOPPADDING', (0, 0), (-1, -1), 8),
-            ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#e0e0e0')),
-            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#f8f9fa')]),
-        ]))
-        elements.append(cat_table)
-
-        return elements
-
-    def _build_coaching_section(self, coaching_data: Dict[str, Any]) -> List:
-        """Build coaching feedback section"""
-        elements = []
-
-        elements.append(PageBreak())
-        elements.append(Paragraph("Coaching Feedback", self.styles['SectionHeader']))
-
-        # Feedback text
-        feedback_text = coaching_data.get('feedback_text', '')
-        if feedback_text:
-            elements.append(Paragraph(feedback_text, self.styles['BodyText']))
-            elements.append(Spacer(1, 15))
-
-        # Action items
-        action_items = coaching_data.get('action_items', [])
-        if action_items:
-            elements.append(Paragraph(
-                "<b>Action Items for Next Call:</b>",
-                self.styles['BodyText']
-            ))
-            for i, item in enumerate(action_items, 1):
-                elements.append(Paragraph(
-                    f"{i}. {item}",
-                    self.styles['BodyText']
-                ))
 
         return elements
 
     def _build_checklist_details(self, responses_data: List[Dict[str, Any]]) -> List:
-        """Build detailed checklist responses section"""
+        """Build detailed checklist responses section - shows only checklist items with Yes/No answers"""
         elements = []
 
         elements.append(PageBreak())
         elements.append(Paragraph("Checklist Details", self.styles['SectionHeader']))
+        elements.append(Spacer(1, 10))
 
-        # Group by category
-        categories = {}
-        for response in responses_data:
-            item = response.get('item', {})
-            category = item.get('category', {})
-            cat_name = category.get('name', 'Uncategorized')
+        # Build a single table with all checklist items
+        table_data = [['Item', 'Answer']]
+        
+        # Sort by item order if available, otherwise by item_id
+        sorted_responses = sorted(
+            responses_data,
+            key=lambda r: r.get('item', {}).get('order', r.get('item_id', 0))
+        )
+        
+        for resp in sorted_responses:
+            # Safely extract item data with better error handling
+            item = resp.get('item') or {}
+            
+            # Handle both dict and object-like structures
+            if not isinstance(item, dict):
+                # If item is an object, try to get attributes
+                title = getattr(item, 'title', None) or 'Unknown Item'
+            else:
+                title = item.get('title') or item.get('name') or 'Unknown Item'
+            
+            # Get validation status
+            validated = resp.get('is_validated')
+            
+            # Determine answer
+            if validated is True:
+                answer = 'Yes'
+            elif validated is False:
+                answer = 'No'
+            else:
+                answer = 'N/A'
+            
+            # Only add items with valid titles
+            if title and title != 'Unknown Item':
+                table_data.append([title, answer])
 
-            if cat_name not in categories:
-                categories[cat_name] = []
-            categories[cat_name].append(response)
-
-        for cat_name, items in categories.items():
+        # Create table if we have data
+        if len(table_data) > 1:
+            item_table = Table(table_data, colWidths=[5.5*inch, 1.5*inch])
+            item_table.setStyle(TableStyle([
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, 0), 11),
+                ('FONTSIZE', (0, 1), (-1, -1), 10),
+                ('ALIGN', (1, 0), (1, -1), 'CENTER'),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
+                ('TOPPADDING', (0, 0), (-1, -1), 8),
+                ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#e0e0e0')),
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#667eea')),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+                ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#f8f9fa')]),
+            ]))
+            elements.append(item_table)
+        else:
             elements.append(Paragraph(
-                f"<b>{cat_name}</b>",
+                "No checklist items available.",
                 self.styles['BodyText']
             ))
-
-            table_data = [['Item', 'Status']]
-            for resp in items:
-                item = resp.get('item', {})
-                title = item.get('title', 'Unknown')
-                validated = resp.get('is_validated')
-
-                if validated is True:
-                    status = 'Yes'
-                elif validated is False:
-                    status = 'No'
-                else:
-                    status = 'N/A'
-
-                table_data.append([title, status])
-
-            if len(table_data) > 1:
-                item_table = Table(table_data, colWidths=[5.5*inch, 1.5*inch])
-                item_table.setStyle(TableStyle([
-                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                    ('FONTSIZE', (0, 0), (-1, -1), 9),
-                    ('ALIGN', (1, 0), (1, -1), 'CENTER'),
-                    ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
-                    ('TOPPADDING', (0, 0), (-1, -1), 4),
-                    ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#e0e0e0')),
-                ]))
-                elements.append(item_table)
-                elements.append(Spacer(1, 10))
 
         return elements
 

@@ -13,7 +13,8 @@ from app.db.session import get_db
 from app.models.session import Session, SessionResponse, SessionStatus
 from app.models.checklist import ChecklistItem, ChecklistCategory
 from app.models.scoring import ScoringResult, ScoreHistory
-from app.api.dependencies import get_current_user_id
+from app.models.user import User
+from app.api.dependencies import get_current_user, get_session_access_filter
 
 router = APIRouter()
 
@@ -21,18 +22,25 @@ router = APIRouter()
 @router.post("/{session_id}/calculate", status_code=status.HTTP_201_CREATED)
 async def calculate_session_score(
     session_id: int,
-    user_id: int = Depends(get_current_user_id),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """
     Calculate score for a session based on checklist responses
     Scoring logic: 10 points per validated item (Yes), 0 for No, total out of 100
+
+    RBAC:
+    - REP: Can calculate own sessions
+    - MANAGER: Can calculate team sessions
+    - ADMIN: Can calculate org sessions
+    - SYSTEM_ADMIN: Can calculate all sessions
     """
-    # Verify session belongs to user
+    # Verify session access with RBAC
+    access_filter = get_session_access_filter(current_user)
     session_result = await db.execute(
         select(Session).where(
             Session.id == session_id,
-            Session.user_id == user_id,
+            access_filter
         )
     )
     session = session_result.scalar_one_or_none()
@@ -40,7 +48,7 @@ async def calculate_session_score(
     if not session:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Session not found"
+            detail="Session not found or access denied"
         )
 
     # Get all responses with checklist items and categories
@@ -115,16 +123,19 @@ async def calculate_session_score(
     # Calculate percentage
     percentage_score = (total_score / max_possible_score * 100) if max_possible_score > 0 else 0
 
-    # Determine risk band
-    if percentage_score >= 80:
+    # Determine risk band based on new thresholds
+    # 70-100: Low Risk (Green)
+    # 40-69: Medium Risk (Yellow)
+    # 0-39: Critical Risk (Red)
+    if percentage_score >= 70:
         risk_band = "green"
-        risk_label = "Healthy"
-    elif percentage_score >= 60:
-        risk_band = "yellow" 
-        risk_label = "Caution"
+        risk_label = "Low Risk"
+    elif percentage_score >= 40:
+        risk_band = "yellow"
+        risk_label = "Medium Risk"
     else:
         risk_band = "red"
-        risk_label = "At Risk"
+        risk_label = "Critical Risk"
 
     # Get top 3 strengths (highest scoring items)
     strengths = sorted(validated_items, key=lambda x: x["score"], reverse=True)[:3]
@@ -175,7 +186,7 @@ async def calculate_session_score(
         calculated_at=datetime.utcnow(),
         score_change=score_change,
         trigger_event="manual_calculation" if previous_result else "initial_calculation",
-        created_by_user_id=user_id
+        created_by_user_id=current_user.id
     )
 
     db.add(score_history_entry)
@@ -208,17 +219,24 @@ async def calculate_session_score(
 @router.get("/{session_id}/score")
 async def get_session_score(
     session_id: int,
-    user_id: int = Depends(get_current_user_id),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """
     Get existing score for a session
+
+    RBAC:
+    - REP: Can view own sessions
+    - MANAGER: Can view team sessions
+    - ADMIN: Can view org sessions
+    - SYSTEM_ADMIN: Can view all sessions
     """
-    # Verify session belongs to user
+    # Verify session access with RBAC
+    access_filter = get_session_access_filter(current_user)
     session_result = await db.execute(
         select(Session).where(
             Session.id == session_id,
-            Session.user_id == user_id,
+            access_filter
         )
     )
     session = session_result.scalar_one_or_none()
@@ -226,7 +244,7 @@ async def get_session_score(
     if not session:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Session not found"
+            detail="Session not found or access denied"
         )
 
     # Get scoring result
@@ -259,19 +277,26 @@ async def get_session_score(
 @router.get("/{session_id}/score/history")
 async def get_score_history(
     session_id: int,
-    user_id: int = Depends(get_current_user_id),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """
     Get complete score history for a session.
     Returns all score calculations ordered by most recent first.
     Includes score changes, trigger events, and timestamps.
+
+    RBAC:
+    - REP: Can view own sessions
+    - MANAGER: Can view team sessions
+    - ADMIN: Can view org sessions
+    - SYSTEM_ADMIN: Can view all sessions
     """
-    # Verify session belongs to user
+    # Verify session access with RBAC
+    access_filter = get_session_access_filter(current_user)
     session_result = await db.execute(
         select(Session).where(
             Session.id == session_id,
-            Session.user_id == user_id,
+            access_filter
         )
     )
     session = session_result.scalar_one_or_none()
@@ -279,7 +304,7 @@ async def get_score_history(
     if not session:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Session not found"
+            detail="Session not found or access denied"
         )
 
     # Get all score history for this session, ordered by most recent first

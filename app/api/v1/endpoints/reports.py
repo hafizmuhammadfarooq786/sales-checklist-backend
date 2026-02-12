@@ -14,10 +14,11 @@ import os
 
 from app.db.session import get_db
 from app.models.session import Session, SessionResponse
-from app.models.scoring import ScoringResult, CoachingFeedback
+from app.models.scoring import ScoringResult, CoachingFeedback, RiskBand
 from app.models.report import Report
 from app.models.checklist import ChecklistItem
-from app.api.dependencies import get_current_user_id
+from app.models.user import User
+from app.api.dependencies import get_current_user, get_session_access_filter
 from app.services.report_service import get_report_service
 from app.services.email_service import email_service
 
@@ -42,19 +43,52 @@ def get_report_url(report: Report, request=None) -> Optional[str]:
     from app.services.s3_service import get_s3_service
     from app.core.config import settings
 
+    # Extract S3 key from pdf_s3_key (handle both full URL and key-only formats)
+    s3_key = report.pdf_s3_key
+    
+    # If pdf_s3_key is a full URL, extract just the key part
+    if s3_key.startswith('http'):
+        # Extract key from URL like: https://bucket.s3.region.amazonaws.com/key/path
+        try:
+            if '.s3.' in s3_key:
+                # Extract everything after the bucket name
+                parts = s3_key.split('.s3.')
+                if len(parts) > 1:
+                    key_part = parts[1].split('/', 1)
+                    if len(key_part) > 1:
+                        s3_key = key_part[1]  # Get the key path
+                    else:
+                        # Fallback: try to extract from URL path
+                        from urllib.parse import urlparse
+                        parsed = urlparse(s3_key)
+                        s3_key = parsed.path.lstrip('/')
+        except Exception as e:
+            logger.warning(f"Failed to extract S3 key from URL {report.pdf_s3_key}: {e}")
+            # If extraction fails and it's a full URL, return it as-is (might be a public URL)
+            if s3_key.startswith('http'):
+                return s3_key
+
     # If PDF is stored in S3, generate presigned URL
     if report.pdf_s3_bucket:
         try:
             s3_service = get_s3_service()
+            
+            # Verify file exists in S3 before generating presigned URL
+            # Note: check_file_exists uses default bucket, so we'll skip this check
+            # and let the presigned URL generation handle errors
+            
             presigned_url = s3_service.generate_presigned_url(
-                report.pdf_s3_key,
+                s3_key,  # Use extracted key, not the full URL
                 expiration=3600,  # 1 hour
-                bucket_name=report.pdf_s3_bucket  # Pass the correct bucket
+                bucket_name=report.pdf_s3_bucket
             )
             if presigned_url:
+                logger.info(f"Generated presigned URL for report: bucket={report.pdf_s3_bucket}, key={s3_key}")
                 return presigned_url
+            else:
+                logger.error(f"Failed to generate presigned URL: bucket={report.pdf_s3_bucket}, key={s3_key}")
         except Exception as e:
-            logger.warning(f"Failed to generate presigned URL for report: {e}")
+            logger.error(f"Failed to generate presigned URL for report (bucket={report.pdf_s3_bucket}, key={s3_key}): {e}", exc_info=True)
 
     # For local storage, construct full URL
     # Try to get base URL from request if available
@@ -65,7 +99,7 @@ def get_report_url(report: Report, request=None) -> Optional[str]:
         base_url = settings.API_BASE_URL.rstrip("/")
 
     # Construct the full URL for local files
-    pdf_path = report.pdf_s3_key
+    pdf_path = s3_key
     if not pdf_path.startswith("http"):
         # Remove leading slash if present
         if pdf_path.startswith("/"):
@@ -80,27 +114,38 @@ def get_report_url(report: Report, request=None) -> Optional[str]:
 async def generate_report(
     session_id: int,
     include_checklist_details: bool = True,
-    user_id: int = Depends(get_current_user_id),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """
     Generate a PDF report for a session.
+    
+    This endpoint ALWAYS regenerates the report, even if one already exists.
+    It recalculates scores from the latest checklist data before generating the report.
+    All checklist details are always included in the report.
 
     Prerequisites:
-    - Session must have scoring results
+    - Session must have checklist responses
 
     Args:
         session_id: Session ID
-        include_checklist_details: Include detailed checklist breakdown (default: True)
+        include_checklist_details: (Deprecated - always True) Always includes all checklist details
 
     Returns:
         Report metadata with download URL
+
+    RBAC:
+    - REP: Can access own sessions
+    - MANAGER: Can access team sessions
+    - ADMIN: Can access org sessions
+    - SYSTEM_ADMIN: Can access all sessions
     """
-    # Verify session belongs to user
+    # Verify session access with RBAC
+    access_filter = get_session_access_filter(current_user)
     session_result = await db.execute(
         select(Session).where(
             Session.id == session_id,
-            Session.user_id == user_id,
+            access_filter
         )
     )
     session = session_result.scalar_one_or_none()
@@ -108,36 +153,111 @@ async def generate_report(
     if not session:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Session not found"
+            detail="Session not found or access denied"
         )
 
-    # Check if report already exists
+    # Check if report already exists (we'll update it, not return early)
     existing_result = await db.execute(
         select(Report).where(Report.session_id == session_id)
     )
     existing = existing_result.scalar_one_or_none()
 
-    if existing and existing.is_generated:
-        return {
-            "session_id": session_id,
-            "report_id": existing.id,
-            "pdf_url": existing.pdf_s3_key,
-            "file_size": existing.pdf_file_size,
-            "generated_at": existing.generated_at,
-            "message": "Report already exists"
-        }
+    # Always recalculate scores from latest checklist data before generating report
+    # Get all responses with checklist items and categories (latest data)
+    responses_result = await db.execute(
+        select(SessionResponse)
+        .where(SessionResponse.session_id == session_id)
+        .options(
+            selectinload(SessionResponse.item).selectinload(ChecklistItem.category)
+        )
+        .order_by(SessionResponse.item_id)
+    )
+    responses = responses_result.scalars().all()
 
-    # Get scoring results (required)
+    if not responses:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No checklist responses found for this session. Cannot generate report."
+        )
+
+    # Recalculate score from latest checklist data
+    total_score = 0
+    validated_count = 0
+    category_scores = {}
+    
+    for response in responses:
+        item = response.item
+        category = item.category
+        
+        # Track category
+        if category.id not in category_scores:
+            category_scores[category.id] = {
+                "name": category.name,
+                "score": 0,
+                "max_score": 0
+            }
+        
+        category_scores[category.id]["max_score"] += 10
+
+        # Calculate score for this item
+        # Use user_answer if provided, otherwise use ai_answer
+        final_answer = response.user_answer if response.user_answer is not None else response.ai_answer
+
+        item_score = 0
+        if final_answer is True:
+            item_score = 10
+            total_score += 10
+            validated_count += 1
+
+        category_scores[category.id]["score"] += item_score
+
+    # Calculate percentage score (0-100)
+    max_possible_score = len(responses) * 10
+    percentage_score = (total_score / max_possible_score * 100) if max_possible_score > 0 else 0
+
+    # Determine risk band based on new thresholds
+    # 70-100: Low Risk (Green)
+    # 40-69: Medium Risk (Yellow)
+    # 0-39: Critical Risk (Red)
+    if percentage_score >= 70:
+        risk_band = RiskBand.GREEN
+    elif percentage_score >= 40:
+        risk_band = RiskBand.YELLOW
+    else:
+        risk_band = RiskBand.RED
+
+    # Get or create scoring result and update with recalculated values
     scoring_result = await db.execute(
         select(ScoringResult).where(ScoringResult.session_id == session_id)
     )
     scoring = scoring_result.scalar_one_or_none()
 
-    if not scoring:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Session must be scored first. Use POST /sessions/{id}/calculate"
+    if scoring:
+        # Update existing scoring result with recalculated values
+        scoring.total_score = percentage_score
+        scoring.risk_band = risk_band
+        scoring.items_validated = validated_count
+        scoring.items_total = len(responses)
+        scoring.category_scores = category_scores
+        # Update top_strengths and top_gaps if needed (simplified for now)
+        scoring.top_strengths = []
+        scoring.top_gaps = []
+    else:
+        # Create new scoring result
+        scoring = ScoringResult(
+            session_id=session_id,
+            total_score=percentage_score,
+            risk_band=risk_band,
+            items_validated=validated_count,
+            items_total=len(responses),
+            category_scores=category_scores,
+            top_strengths=[],
+            top_gaps=[]
         )
+        db.add(scoring)
+
+    await db.commit()
+    await db.refresh(scoring)
 
     # Get coaching feedback (optional)
     coaching_result = await db.execute(
@@ -145,37 +265,49 @@ async def generate_report(
     )
     coaching = coaching_result.scalar_one_or_none()
 
-    # Get checklist responses if requested
-    responses_data = None
-    if include_checklist_details:
-        responses_result = await db.execute(
-            select(SessionResponse)
-            .where(SessionResponse.session_id == session_id)
-            .options(
-                selectinload(SessionResponse.item).selectinload(ChecklistItem.category)
-            )
-            .order_by(SessionResponse.item_id)
-        )
-        responses = responses_result.scalars().all()
-
-        responses_data = []
-        for resp in responses:
-            responses_data.append({
-                "id": resp.id,
-                "item_id": resp.item_id,
-                "is_validated": resp.is_validated,
-                "confidence": resp.confidence,
-                "evidence_text": resp.evidence_text,
-                "item": {
-                    "id": resp.item.id,
-                    "title": resp.item.title,
-                    "definition": resp.item.definition,
-                    "category": {
-                        "id": resp.item.category.id,
-                        "name": resp.item.category.name,
+    # Always include all checklist details in the report
+    # Use the responses we already loaded for score calculation
+    responses_data = []
+    for resp in responses:
+                # Ensure item is loaded
+                if not resp.item:
+                    logger.warning(f"SessionResponse {resp.id} has no item loaded for session {session_id}")
+                    continue
+                    
+                # Ensure category is loaded
+                if not resp.item.category:
+                    logger.warning(f"ChecklistItem {resp.item.id} has no category loaded for session {session_id}")
+                    continue
+                
+                # Get item title - use a fallback if title is None or empty
+                item_title = resp.item.title
+                if not item_title or item_title.strip() == '':
+                    logger.warning(f"ChecklistItem {resp.item.id} has no title, using fallback")
+                    item_title = f"Checklist Item {resp.item.id}"
+                
+                # Determine final answer: user_answer takes precedence over ai_answer
+                # user_answer if not None, otherwise ai_answer
+                final_answer = resp.user_answer if resp.user_answer is not None else resp.ai_answer
+                
+                responses_data.append({
+                    "id": resp.id,
+                    "item_id": resp.item_id,
+                    "is_validated": final_answer,  # True = Yes, False = No
+                    "ai_answer": resp.ai_answer,
+                    "user_answer": resp.user_answer,
+                    "confidence": getattr(resp, 'confidence', None),
+                    "evidence_text": getattr(resp, 'evidence_text', None),
+                    "item": {
+                        "id": resp.item.id,
+                        "title": item_title,
+                        "order": getattr(resp.item, 'order', resp.item_id),  # Use order if available
+                        "definition": getattr(resp.item, 'definition', '') or '',
+                        "category": {
+                            "id": resp.item.category.id,
+                            "name": resp.item.category.name or 'Uncategorized',
+                        }
                     }
-                }
-            })
+                })
 
     try:
         # Prepare data for report
@@ -209,7 +341,7 @@ async def generate_report(
         report_service = get_report_service()
         pdf_result = await report_service.generate_session_report(
             session_id=session_id,
-            user_id=user_id,
+            user_id=current_user.id,
             session_data=session_data,
             scoring_data=scoring_data,
             coaching_data=coaching_data,
@@ -217,9 +349,33 @@ async def generate_report(
         )
 
         # Save or update report record
+        # Store only the S3 key (not the full URL) for proper presigned URL generation
+        s3_key = pdf_result.get('s3_key') or pdf_result.get('pdf_url')
+        
+        # If s3_key is a full URL, extract just the key part
+        if s3_key and s3_key.startswith('http'):
+            # Extract key from URL like: https://bucket.s3.region.amazonaws.com/key/path
+            try:
+                # Remove protocol and domain, keep only the path after bucket name
+                if '.s3.' in s3_key:
+                    # Extract everything after the bucket name
+                    parts = s3_key.split('.s3.')
+                    if len(parts) > 1:
+                        key_part = parts[1].split('/', 1)
+                        if len(key_part) > 1:
+                            s3_key = key_part[1]  # Get the key path
+                        else:
+                            # Fallback: try to extract from URL path
+                            from urllib.parse import urlparse
+                            parsed = urlparse(s3_key)
+                            s3_key = parsed.path.lstrip('/')
+            except Exception as e:
+                logger.warning(f"Failed to extract S3 key from URL {s3_key}: {e}")
+                # If extraction fails, use the full URL (will be handled in get_report_url)
+        
         if existing:
             existing.pdf_s3_bucket = pdf_result.get('s3_bucket')
-            existing.pdf_s3_key = pdf_result.get('pdf_url')
+            existing.pdf_s3_key = s3_key  # Store only the key, not the full URL
             existing.pdf_file_size = pdf_result.get('file_size')
             existing.generated_at = datetime.utcnow()
             existing.is_generated = True
@@ -228,7 +384,7 @@ async def generate_report(
             report = Report(
                 session_id=session_id,
                 pdf_s3_bucket=pdf_result.get('s3_bucket'),
-                pdf_s3_key=pdf_result.get('pdf_url'),
+                pdf_s3_key=s3_key,  # Store only the key, not the full URL
                 pdf_file_size=pdf_result.get('file_size'),
                 generated_at=datetime.utcnow(),
                 is_generated=True
@@ -258,21 +414,30 @@ async def generate_report(
 @router.get("/{session_id}/report")
 async def get_report(
     session_id: int,
-    user_id: int = Depends(get_current_user_id),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     request: Optional[object] = None,
+    auto_generate: bool = True,  # Auto-generate if report doesn't exist
 ):
     """
     Get report metadata for a session.
+    If report doesn't exist and auto_generate=True, generates it on-demand.
 
     Returns:
         Report metadata with download URL (pre-signed if S3)
+
+    RBAC:
+    - REP: Can access own sessions
+    - MANAGER: Can access team sessions
+    - ADMIN: Can access org sessions
+    - SYSTEM_ADMIN: Can access all sessions
     """
-    # Verify session belongs to user
+    # Verify session access with RBAC
+    access_filter = get_session_access_filter(current_user)
     session_result = await db.execute(
         select(Session).where(
             Session.id == session_id,
-            Session.user_id == user_id,
+            access_filter
         )
     )
     session = session_result.scalar_one_or_none()
@@ -280,7 +445,7 @@ async def get_report(
     if not session:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Session not found"
+            detail="Session not found or access denied"
         )
 
     # Get report
@@ -289,10 +454,33 @@ async def get_report(
     )
     report = report_result.scalar_one_or_none()
 
+    # Auto-generate report if it doesn't exist
+    if (not report or not report.is_generated) and auto_generate:
+        logger.info(f"Report not found for session {session_id}, generating on-demand...")
+        try:
+            # Call generate_report internally
+            result = await generate_report(
+                session_id=session_id,
+                include_checklist_details=True,
+                current_user=current_user,
+                db=db
+            )
+            # Refresh report from DB
+            report_result = await db.execute(
+                select(Report).where(Report.session_id == session_id)
+            )
+            report = report_result.scalar_one_or_none()
+        except Exception as e:
+            logger.error(f"Failed to auto-generate report for session {session_id}: {e}", exc_info=True)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to generate report: {str(e)}"
+            )
+
     if not report or not report.is_generated:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Report not found. Use POST to generate."
+            detail="Report not found and could not be generated."
         )
 
     # Generate presigned URL for PDF
@@ -312,20 +500,29 @@ async def get_report(
 @router.get("/{session_id}/report/download")
 async def download_report(
     session_id: int,
-    user_id: int = Depends(get_current_user_id),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    auto_generate: bool = True,  # Auto-generate if report doesn't exist
 ):
     """
     Get the download URL for the PDF report.
+    If report doesn't exist and auto_generate=True, generates it on-demand.
 
     Returns:
         JSON with download_url (pre-signed for S3, direct for local files)
+
+    RBAC:
+    - REP: Can access own sessions
+    - MANAGER: Can access team sessions
+    - ADMIN: Can access org sessions
+    - SYSTEM_ADMIN: Can access all sessions
     """
-    # Verify session belongs to user
+    # Verify session access with RBAC
+    access_filter = get_session_access_filter(current_user)
     session_result = await db.execute(
         select(Session).where(
             Session.id == session_id,
-            Session.user_id == user_id,
+            access_filter
         )
     )
     session = session_result.scalar_one_or_none()
@@ -333,7 +530,7 @@ async def download_report(
     if not session:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Session not found"
+            detail="Session not found or access denied"
         )
 
     # Get report
@@ -342,10 +539,47 @@ async def download_report(
     )
     report = report_result.scalar_one_or_none()
 
+    # Auto-generate report if it doesn't exist
+    if (not report or not report.is_generated) and auto_generate:
+        logger.info(f"Report not found for session {session_id}, generating on-demand for download...")
+        try:
+            # Check if session has scoring results (required for report)
+            scoring_result = await db.execute(
+                select(ScoringResult).where(ScoringResult.session_id == session_id)
+            )
+            scoring = scoring_result.scalar_one_or_none()
+
+            if not scoring:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Session must be scored first. Please calculate scores before generating report."
+                )
+
+            # Call generate_report internally
+            await generate_report(
+                session_id=session_id,
+                include_checklist_details=True,
+                current_user=current_user,
+                db=db
+            )
+            # Refresh report from DB
+            report_result = await db.execute(
+                select(Report).where(Report.session_id == session_id)
+            )
+            report = report_result.scalar_one_or_none()
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Failed to auto-generate report for session {session_id}: {e}", exc_info=True)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to generate report: {str(e)}"
+            )
+
     if not report or not report.is_generated:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Report not found"
+            detail="Report not found and could not be generated."
         )
 
     # Generate download URL (pre-signed for S3, local URL for files)
@@ -369,7 +603,7 @@ async def download_report(
 async def email_report(
     session_id: int,
     recipient_email: Optional[str] = None,
-    user_id: int = Depends(get_current_user_id),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -381,14 +615,19 @@ async def email_report(
 
     Returns:
         Email delivery status
-    """
-    # Verify session belongs to user and get user details
-    from app.models.user import User
 
+    RBAC:
+    - REP: Can access own sessions
+    - MANAGER: Can access team sessions
+    - ADMIN: Can access org sessions
+    - SYSTEM_ADMIN: Can access all sessions
+    """
+    # Verify session access with RBAC
+    access_filter = get_session_access_filter(current_user)
     session_result = await db.execute(
         select(Session).where(
             Session.id == session_id,
-            Session.user_id == user_id,
+            access_filter
         )
     )
     session = session_result.scalar_one_or_none()
@@ -396,23 +635,11 @@ async def email_report(
     if not session:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Session not found"
-        )
-
-    # Get user for email
-    user_result = await db.execute(
-        select(User).where(User.id == user_id)
-    )
-    user = user_result.scalar_one_or_none()
-
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found"
+            detail="Session not found or access denied"
         )
 
     # Use provided email or user's email
-    to_email = recipient_email or user.email
+    to_email = recipient_email or current_user.email
 
     # Get report
     report_result = await db.execute(
@@ -428,7 +655,7 @@ async def email_report(
 
     try:
         # Send email with report link
-        user_name = f"{user.first_name or ''} {user.last_name or ''}".strip() or user.email
+        user_name = f"{current_user.first_name or ''} {current_user.last_name or ''}".strip() or current_user.email
 
         message = f"""
 Your The Sales Checklist report for "{session.customer_name}" is ready!
@@ -477,13 +704,19 @@ You can download your report from The Sales Checklist dashboard.
 async def regenerate_report(
     session_id: int,
     include_checklist_details: bool = True,
-    user_id: int = Depends(get_current_user_id),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """
     Regenerate the PDF report (overwrites existing).
 
     Use after updating scores or coaching feedback.
+
+    RBAC:
+    - REP: Can access own sessions
+    - MANAGER: Can access team sessions
+    - ADMIN: Can access org sessions
+    - SYSTEM_ADMIN: Can access all sessions
     """
     # Delete existing report record to force regeneration
     existing_result = await db.execute(
@@ -499,6 +732,6 @@ async def regenerate_report(
     return await generate_report(
         session_id=session_id,
         include_checklist_details=include_checklist_details,
-        user_id=user_id,
+        current_user=current_user,
         db=db
     )
