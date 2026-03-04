@@ -68,16 +68,21 @@ async def get_current_user(
 ) -> User:
     """
     Get the current authenticated user object.
+    Blocks soft-deleted users from accessing the system.
     """
     result = await db.execute(
-        select(User).where(User.id == user_id)
+        select(User).where(
+            User.id == user_id,
+            User.deleted_at.is_(None)  # Block soft-deleted users
+        )
     )
     user = result.scalar_one_or_none()
 
     if not user:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found"
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User account not found or has been deleted",
+            headers={"WWW-Authenticate": "Bearer"},
         )
 
     return user
@@ -88,13 +93,21 @@ async def get_current_active_user(
 ) -> User:
     """
     Get the current authenticated and active user.
+    Blocks inactive or deleted users.
     """
     if not current_user.is_active:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Inactive user"
+            detail="User account is inactive or has been deleted"
         )
-    
+
+    # Additional check for soft delete (should already be blocked by get_current_user)
+    if current_user.deleted_at is not None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User account has been deleted"
+        )
+
     return current_user
 
 
@@ -119,29 +132,40 @@ def get_session_access_filter(current_user: User):
     Build SQLAlchemy filter conditions based on user role for session access.
 
     Role-Based Access Logic:
-    - ADMIN: Can access ALL sessions in their organization
-    - MANAGER: Can access sessions from users in their team
+    - ADMIN: Can access ALL sessions in their organization (from non-deleted users)
+    - MANAGER: Can access sessions from users in their team (from non-deleted users)
     - REP: Can only access their own sessions
 
     Returns:
         SQLAlchemy filter condition to be used in WHERE clause
     """
     from app.models.session import Session
+    from sqlalchemy import and_
 
     if current_user.role == UserRole.ADMIN:
-        # Admin sees all sessions in their organization
+        # Admin sees all sessions in their organization (excluding deleted users)
         if current_user.organization_id:
             # Filter by organization - get all users in org, then their sessions
-            return Session.user.has(organization_id=current_user.organization_id)
+            return Session.user.has(
+                and_(
+                    User.organization_id == current_user.organization_id,
+                    User.deleted_at.is_(None)
+                )
+            )
         else:
             # No organization assigned - only see own sessions
             return Session.user_id == current_user.id
 
     elif current_user.role == UserRole.MANAGER:
-        # Manager sees team sessions
+        # Manager sees team sessions (excluding deleted users)
         if current_user.team_id:
             # Filter by team - get all users in team, then their sessions
-            return Session.user.has(team_id=current_user.team_id)
+            return Session.user.has(
+                and_(
+                    User.team_id == current_user.team_id,
+                    User.deleted_at.is_(None)
+                )
+            )
         else:
             # No team assigned - only see own sessions
             return Session.user_id == current_user.id

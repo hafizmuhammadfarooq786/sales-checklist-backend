@@ -29,6 +29,7 @@ api_router.include_router(sessions.router, prefix="/sessions", tags=["Sessions"]
 api_router.include_router(responses.router, prefix="/sessions", tags=["Responses"])
 api_router.include_router(uploads.router, prefix="/sessions", tags=["Uploads"])
 api_router.include_router(scoring.router, prefix="/sessions", tags=["Scoring"])
+api_router.include_router(scoring.router, prefix="/scoring", tags=["Scoring"])
 api_router.include_router(transcription.router, prefix="/sessions", tags=["Transcription"])
 api_router.include_router(coaching.router, prefix="/sessions", tags=["Coaching"])
 api_router.include_router(reports.router, prefix="/sessions", tags=["Reports"])

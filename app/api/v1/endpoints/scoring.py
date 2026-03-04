@@ -358,3 +358,108 @@ async def get_score_history(
             "last_calculated": history_records[0].calculated_at.isoformat()
         }
     }
+
+
+@router.get("/{session_id}/score/version/{version_number}")
+async def get_score_version_details(
+    session_id: int,
+    version_number: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Get complete details for a specific score version.
+
+    Returns:
+    - Score and risk band at that version
+    - Complete checklist state (all 92 responses)
+    - Metadata about changes from previous version
+
+    This allows users to view exactly what the checklist looked like
+    at any point in history.
+
+    RBAC:
+    - REP: Can view own sessions
+    - MANAGER: Can view team sessions
+    - ADMIN: Can view org sessions
+    - SYSTEM_ADMIN: Can view all sessions
+    """
+    # Verify session access with RBAC
+    access_filter = get_session_access_filter(current_user)
+    session_result = await db.execute(
+        select(Session).where(
+            Session.id == session_id,
+            access_filter
+        )
+    )
+    session = session_result.scalar_one_or_none()
+
+    if not session:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Session not found or access denied"
+        )
+
+    # Get the specific version from score history
+    history_result = await db.execute(
+        select(ScoreHistory)
+        .where(
+            ScoreHistory.session_id == session_id,
+            ScoreHistory.version_number == version_number
+        )
+    )
+    history = history_result.scalar_one_or_none()
+
+    if not history:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Version {version_number} not found for this session"
+        )
+
+    # Get checklist item details for the responses in this version
+    item_ids = [r["item_id"] for r in history.responses_snapshot]
+    items_result = await db.execute(
+        select(ChecklistItem)
+        .where(ChecklistItem.id.in_(item_ids))
+        .options(selectinload(ChecklistItem.category))
+    )
+    items = {item.id: item for item in items_result.scalars().all()}
+
+    # Build detailed checklist items with category information
+    checklist_items = []
+    for response_data in history.responses_snapshot:
+        item_id = response_data["item_id"]
+        item = items.get(item_id)
+
+        if item:
+            checklist_items.append({
+                "item_id": item_id,
+                "title": item.title,
+                "definition": item.definition,
+                "category": item.category.name if item.category else None,
+                "order": item.order,
+                "answer": response_data["answer"],
+                "score": response_data["score"]
+            })
+
+    # Sort by order
+    checklist_items.sort(key=lambda x: x.get("order", 0))
+
+    return {
+        "session_id": session_id,
+        "customer_name": session.customer_name,
+        "opportunity_name": session.opportunity_name,
+        "version": {
+            "version_number": history.version_number,
+            "total_score": history.total_score,
+            "risk_band": history.risk_band,
+            "items_validated": history.items_validated,
+            "items_total": history.items_total,
+            "calculated_at": history.calculated_at.isoformat(),
+            "score_change": history.score_change,
+            "changes_count": history.changes_count,
+            "trigger_event": history.trigger_event,
+            "created_by_user_id": history.created_by_user_id
+        },
+        "checklist_items": checklist_items
+    }

@@ -47,7 +47,12 @@ class ScoringResult(Base, TimestampMixin):
 class ScoreHistory(Base, TimestampMixin):
     """
     Historical record of score calculations for a session.
-    Preserves score changes when users edit AI answers and recalculate.
+    Preserves complete snapshots of checklist responses for each version.
+
+    Each submission/resubmission creates a new version with:
+    - Complete score calculation
+    - Full snapshot of all 92 checklist responses
+    - Change tracking from previous version
     """
     __tablename__ = "score_history"
 
@@ -60,6 +65,14 @@ class ScoreHistory(Base, TimestampMixin):
     risk_band = Column(SQLEnum(RiskBand), nullable=False)
     items_validated = Column(Integer, nullable=False)
     items_total = Column(Integer, nullable=False)
+
+    # Version tracking
+    version_number = Column(Integer, nullable=False)  # 1, 2, 3, etc.
+    changes_count = Column(Integer, nullable=True)  # How many answers changed from previous version
+
+    # Complete responses snapshot for this version
+    # Format: [{"item_id": 1, "answer": true, "score": 10}, ...]
+    responses_snapshot = Column(JSON, nullable=False)
 
     # Change tracking
     calculated_at = Column(DateTime, nullable=False)

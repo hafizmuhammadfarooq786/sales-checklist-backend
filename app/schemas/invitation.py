@@ -4,7 +4,7 @@ Pydantic models for invitation validation
 """
 from datetime import datetime
 from typing import Optional
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
 
 
 class InvitationBase(BaseModel):
@@ -12,6 +12,13 @@ class InvitationBase(BaseModel):
     email: EmailStr
     team_id: Optional[int] = None
     role: str = Field(..., pattern="^(rep|manager|admin)$")
+
+    @field_validator("role", mode="before")
+    @classmethod
+    def normalize_role(cls, v: str) -> str:
+        if v is None or (isinstance(v, str) and v.strip() == ""):
+            return "rep"
+        return v.strip().lower() if isinstance(v, str) else v
 
 
 class InvitationCreate(InvitationBase):

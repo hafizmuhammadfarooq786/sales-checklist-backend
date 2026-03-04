@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, or_
 from sqlalchemy.orm import selectinload
 from typing import List, Optional
+from datetime import datetime
 
 from app.db.session import get_db
 from app.models import Organization, User, Team, OrganizationSettings
@@ -203,6 +204,7 @@ async def list_all_users(
     team_id: Optional[int] = None,
     role: Optional[UserRole] = None,
     is_active: Optional[bool] = None,
+    include_deleted: bool = Query(False, description="Include soft-deleted users"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_roles(UserRole.SYSTEM_ADMIN))
 ):
@@ -215,11 +217,16 @@ async def list_all_users(
     - team_id: Filter by team
     - role: Filter by role
     - is_active: Filter by active status
+    - include_deleted: Include soft-deleted users (default: false)
     """
     query = select(User).options(
         selectinload(User.organization),
         selectinload(User.team)
     )
+
+    # Exclude soft-deleted users by default
+    if not include_deleted:
+        query = query.where(User.deleted_at.is_(None))
 
     # Apply filters
     if search:
@@ -254,17 +261,23 @@ async def list_all_users(
 @router.get("/users/{user_id}", response_model=UserResponse)
 async def get_user(
     user_id: int,
+    include_deleted: bool = Query(False, description="Include soft-deleted user"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_roles(UserRole.SYSTEM_ADMIN))
 ):
     """
     Get user details by ID (SYSTEM_ADMIN only).
     """
-    result = await db.execute(
-        select(User)
-        .options(selectinload(User.organization), selectinload(User.team))
-        .where(User.id == user_id)
-    )
+    query = select(User).options(
+        selectinload(User.organization),
+        selectinload(User.team)
+    ).where(User.id == user_id)
+
+    # Exclude soft-deleted users by default
+    if not include_deleted:
+        query = query.where(User.deleted_at.is_(None))
+
+    result = await db.execute(query)
     user = result.scalar_one_or_none()
 
     if not user:
@@ -317,19 +330,24 @@ async def delete_user(
     current_user: User = Depends(require_roles(UserRole.SYSTEM_ADMIN))
 ):
     """
-    Delete a user (SYSTEM_ADMIN only).
+    Soft delete a user (SYSTEM_ADMIN only).
 
-    WARNING: This will delete the user and may affect associated sessions and data.
+    This marks the user as deleted without removing their data from the database.
+    All sessions, score history, and associated data are preserved.
+    The user will be blocked from logging in and hidden from user lists.
     """
     result = await db.execute(
-        select(User).where(User.id == user_id)
+        select(User).where(
+            User.id == user_id,
+            User.deleted_at.is_(None)  # Only get non-deleted users
+        )
     )
     user = result.scalar_one_or_none()
 
     if not user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"User with ID {user_id} not found"
+            detail=f"User with ID {user_id} not found or already deleted"
         )
 
     # Prevent deleting yourself
@@ -339,8 +357,51 @@ async def delete_user(
             detail="Cannot delete your own user account"
         )
 
-    await db.delete(user)
+    # Soft delete: mark as deleted instead of removing from database
+    user.deleted_at = datetime.utcnow()
+    user.deleted_by = current_user.id
+    user.is_active = False  # Also mark as inactive
+
     await db.commit()
+
+
+@router.post("/users/{user_id}/restore", response_model=UserResponse)
+async def restore_user(
+    user_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.SYSTEM_ADMIN))
+):
+    """
+    Restore a soft-deleted user (SYSTEM_ADMIN only).
+
+    This reactivates a previously deleted user, allowing them to log in again.
+    All their historical data (sessions, scores, etc.) remains intact.
+    """
+    result = await db.execute(
+        select(User)
+        .options(selectinload(User.organization), selectinload(User.team))
+        .where(
+            User.id == user_id,
+            User.deleted_at.is_not(None)  # Only get deleted users
+        )
+    )
+    user = result.scalar_one_or_none()
+
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Deleted user with ID {user_id} not found"
+        )
+
+    # Restore the user
+    user.deleted_at = None
+    user.deleted_by = None
+    user.is_active = True  # Reactivate the user
+
+    await db.commit()
+    await db.refresh(user)
+
+    return UserResponse.model_validate(user)
 
 
 # ==================== STATISTICS ====================

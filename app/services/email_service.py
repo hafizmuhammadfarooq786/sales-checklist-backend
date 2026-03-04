@@ -195,7 +195,27 @@ class TemplateLoader(BaseLoader):
             </p>
         </div>
 
-        <p>{{ project_name }} helps sales teams analyze calls, track performance, and improve their sales process with AI-powered insights.</p>
+        <div style="background: #fff3cd; padding: 20px; margin: 20px 0; border-radius: 5px; border-left: 4px solid #ffc107;">
+            <h3 style="margin-top: 0; color: #856404;">🔐 Your Login Credentials</h3>
+            <p>An account has been created for you. Use these credentials to sign in:</p>
+            <p style="margin: 10px 0;">
+                <strong>Email:</strong> {{ user_email }}<br>
+                <strong>Temporary Password:</strong><br>
+                <span style="font-family: 'Courier New', monospace; font-size: 16px; background: #333; color: #0f0; padding: 10px; border-radius: 5px; letter-spacing: 2px; display: inline-block;">{{ temp_password }}</span>
+            </p>
+        </div>
+
+        <div style="background: #ffebee; border: 1px solid #f44336; color: #c62828; padding: 15px; border-radius: 5px; margin: 20px 0;">
+            <strong>⚠️ Security Notice:</strong> You will be required to change this temporary password on your first login.
+        </div>
+
+        <h3>Next Steps:</h3>
+        <ol style="line-height: 2;">
+            <li>Click the "Accept Invitation" button below</li>
+            <li>Sign in with your email and the temporary password above</li>
+            <li>Complete the invitation acceptance</li>
+            <li>Change your password to something secure and memorable</li>
+        </ol>
 
         <p style="text-align: center;">
             <a href="{{ invite_url }}" class="button">Accept Invitation</a>
@@ -505,10 +525,11 @@ class EmailService:
         inviter_name: str,
         invite_url: str,
         role: str,
-        team_name: Optional[str] = None
+        team_name: Optional[str] = None,
+        temp_password: Optional[str] = None
     ) -> bool:
         """
-        Send organization invitation email
+        Send organization invitation email with temporary password
 
         Args:
             to_email: Email address to send invitation to
@@ -517,6 +538,7 @@ class EmailService:
             invite_url: URL to accept invitation
             role: User role (rep, manager, admin)
             team_name: Optional team name
+            temp_password: Temporary password for initial login
 
         Returns:
             bool: True if email was sent successfully
@@ -529,6 +551,7 @@ class EmailService:
             invite_url=invite_url,
             role=role,
             team_name=team_name or "No team assigned",
+            temp_password=temp_password,
             project_name=settings.PROJECT_NAME
         )
 

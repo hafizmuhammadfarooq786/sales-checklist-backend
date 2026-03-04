@@ -9,7 +9,7 @@ from sqlalchemy import select, func
 
 from app.db.session import get_db
 from app.models import Session, User
-from app.models.session import SessionStatus
+from app.models.session import SessionStatus, SessionMode
 from app.models.scoring import ScoringResult, RiskBand
 from app.schemas.session import (
     SessionCreate,
@@ -52,325 +52,156 @@ async def generate_coaching_in_background(session_id: int, total_score: float, r
             session = session_result.scalar_one_or_none()
 
             if not session:
-                logger.error(f"Session {session_id} not found for coaching generation")
+                logger.error(f"Session {session_id} not found in background task")
                 return
 
-            # Check if coaching already exists
-            existing_result = await db.execute(
-                select(CoachingFeedback).where(CoachingFeedback.session_id == session_id)
+            # Get all responses for this session
+            from app.models.session import SessionResponse as SessionResponseModel
+            responses_result = await db.execute(
+                select(SessionResponseModel)
+                .where(SessionResponseModel.session_id == session_id)
+                .options(selectinload(SessionResponseModel.item).selectinload(ChecklistItem.category))
             )
-            existing = existing_result.scalar_one_or_none()
+            responses = responses_result.scalars().all()
 
-            if existing:
-                logger.info(f"Coaching already exists for session {session_id}, skipping coaching generation")
-            else:
-                # Get scoring result
-                scoring_result = await db.execute(
-                    select(ScoringResult).where(ScoringResult.session_id == session_id)
-                )
-                scoring = scoring_result.scalar_one_or_none()
-
-                if not scoring:
-                    logger.error(f"No scoring result found for session {session_id}")
-                    return
-
-                # Generate coaching feedback (using new gap-based approach)
+            # === Generate Coaching Feedback ===
+            try:
                 coaching_service = get_coaching_service()
-
                 feedback_data = await coaching_service.generate_coaching_feedback(
                     session_id=session_id,
-                    score=scoring.total_score,
+                    score=total_score,
                     risk_band=risk_band.value if hasattr(risk_band, 'value') else risk_band,
-                    db=db,  # Required for gap-based coaching
+                    db=db,
                     customer_name=session.customer_name,
                     opportunity_name=session.opportunity_name or ""
                 )
 
-                # Generate audio (optional, can be disabled for faster response)
-                audio_data = None
-                try:
-                    if feedback_data.get('feedback_text'):
-                        audio_data = await coaching_service.generate_coaching_audio(
-                            feedback_text=feedback_data['feedback_text'],
-                            session_id=session_id,
-                            user_id=session.user_id
-                        )
-                except Exception as audio_error:
-                    logger.warning(f"Failed to generate audio for session {session_id}: {audio_error}")
-                    # Continue without audio
-
-                # Save coaching to database
-                coaching_feedback = CoachingFeedback(
-                    session_id=session_id,
-                    feedback_text=feedback_data['feedback_text'],
-                    strengths=feedback_data.get('strengths'),
-                    improvement_areas=feedback_data.get('improvement_areas'),
-                    action_items=feedback_data.get('action_items'),
-                    audio_s3_bucket=audio_data.get('s3_bucket') if audio_data else None,
-                    audio_s3_key=audio_data.get('s3_key') if audio_data else audio_data.get('audio_url') if audio_data else None,
-                    audio_duration=audio_data.get('duration_seconds') if audio_data else None,
-                    generated_at=datetime.utcnow()
+                # Check if coaching already exists
+                existing_coaching_result = await db.execute(
+                    select(CoachingFeedback).where(CoachingFeedback.session_id == session_id)
                 )
+                existing_coaching = existing_coaching_result.scalar_one_or_none()
 
-                db.add(coaching_feedback)
+                if existing_coaching:
+                    # Update existing
+                    existing_coaching.feedback_text = feedback_data['feedback_text']
+                    existing_coaching.strengths = feedback_data.get('strengths')
+                    existing_coaching.improvement_areas = feedback_data.get('improvement_areas')
+                    existing_coaching.action_items = feedback_data.get('action_items')
+                    existing_coaching.generated_at = datetime.utcnow()
+                else:
+                    # Create new
+                    coaching_feedback = CoachingFeedback(
+                        session_id=session_id,
+                        feedback_text=feedback_data['feedback_text'],
+                        strengths=feedback_data.get('strengths'),
+                        improvement_areas=feedback_data.get('improvement_areas'),
+                        action_items=feedback_data.get('action_items'),
+                        generated_at=datetime.utcnow()
+                    )
+                    db.add(coaching_feedback)
+
                 await db.commit()
-                await db.refresh(coaching_feedback)
+                logger.info(f"Coaching feedback generated for session {session_id}")
 
-                logger.info(f"Coaching feedback generated successfully for session {session_id}")
+            except Exception as coaching_error:
+                logger.error(f"Failed to generate coaching for session {session_id}: {str(coaching_error)}", exc_info=True)
 
-            # Now generate report with all data (coaching + scoring + responses)
-            logger.info(f"Starting report generation for session {session_id}")
-
-            # Check if report already exists
-            report_result = await db.execute(
-                select(Report).where(Report.session_id == session_id)
-            )
-            existing_report = report_result.scalar_one_or_none()
-
-            if existing_report and existing_report.is_generated:
-                logger.info(f"Report already exists for session {session_id}, skipping report generation")
-                return
-
-            # Get all necessary data for report
-            scoring_result = await db.execute(
-                select(ScoringResult).where(ScoringResult.session_id == session_id)
-            )
-            scoring = scoring_result.scalar_one_or_none()
-
-            coaching_result = await db.execute(
-                select(CoachingFeedback).where(CoachingFeedback.session_id == session_id)
-            )
-            coaching = coaching_result.scalar_one_or_none()
-
-            # Get checklist responses
-            from app.models.session import SessionResponse
-            from app.models.checklist import CoachingQuestion
-            responses_result = await db.execute(
-                select(SessionResponse)
-                .where(SessionResponse.session_id == session_id)
-                .options(
-                    selectinload(SessionResponse.item).selectinload(ChecklistItem.category),
-                    selectinload(SessionResponse.item).selectinload(ChecklistItem.coaching_questions)
-                )
-                .order_by(SessionResponse.item_id)
-            )
-            responses = responses_result.scalars().all()
-
-            # Prepare report data
-            session_data = {
-                "customer_name": session.customer_name,
-                "opportunity_name": session.opportunity_name,
-                "deal_stage": session.deal_stage,
-                "created_at": session.created_at
-            }
-
-            scoring_data = {
-                "total_score": scoring.total_score,
-                "risk_band": scoring.risk_band.value if hasattr(scoring.risk_band, 'value') else scoring.risk_band,
-                "category_scores": scoring.category_scores,
-                "top_strengths": scoring.top_strengths,
-                "top_gaps": scoring.top_gaps,
-                "items_validated": scoring.items_validated,
-                "items_total": scoring.items_total
-            } if scoring else None
-
-            coaching_data = {
-                "feedback_text": coaching.feedback_text,
-                "strengths": coaching.strengths,
-                "improvement_areas": coaching.improvement_areas,
-                "action_items": coaching.action_items
-            } if coaching else None
-
-            responses_data = []
-            for resp in responses:
-                # Ensure item is loaded
-                if not resp.item:
-                    logger.warning(f"SessionResponse {resp.id} has no item loaded for session {session_id}")
-                    continue
-                    
-                # Ensure category is loaded
-                if not resp.item.category:
-                    logger.warning(f"ChecklistItem {resp.item.id} has no category loaded for session {session_id}")
-                    continue
-                
-                # Get item title - use a fallback if title is None or empty
-                item_title = resp.item.title
-                if not item_title or item_title.strip() == '':
-                    logger.warning(f"ChecklistItem {resp.item.id} has no title, using fallback")
-                    item_title = f"Checklist Item {resp.item.id}"
-                
-                # Determine final answer: user_answer takes precedence over ai_answer
-                # user_answer if not None, otherwise ai_answer
-                final_answer = resp.user_answer if resp.user_answer is not None else resp.ai_answer
-                
-                responses_data.append({
-                    "id": resp.id,
-                    "item_id": resp.item_id,
-                    "is_validated": final_answer,  # True = Yes, False = No
-                    "ai_answer": resp.ai_answer,
-                    "user_answer": resp.user_answer,
-                    "confidence": getattr(resp, 'confidence', None),
-                    "evidence_text": getattr(resp, 'evidence_text', None),
-                    "ai_reasoning": getattr(resp, 'ai_reasoning', None),
-                    "item": {
-                        "id": resp.item.id,
-                        "title": item_title,
-                        "order": getattr(resp.item, 'order', resp.item_id),
-                        "definition": getattr(resp.item, 'definition', '') or '',
-                        "category": {
-                            "id": resp.item.category.id,
-                            "name": resp.item.category.name or 'Uncategorized',
-                        }
-                    }
-                })
-
-            # Generate PDF report
-            report_service = get_report_service()
-            pdf_result = await report_service.generate_session_report(
-                session_id=session_id,
-                user_id=session.user_id,
-                session_data=session_data,
-                scoring_data=scoring_data,
-                coaching_data=coaching_data,
-                responses_data=responses_data
-            )
-
-            # Save or update report record
-            # Store only the S3 key (not the full URL) for proper presigned URL generation
-            s3_key = pdf_result.get('s3_key') or pdf_result.get('pdf_url')
-            
-            # If s3_key is a full URL, extract just the key part
-            if s3_key and s3_key.startswith('http'):
-                # Extract key from URL like: https://bucket.s3.region.amazonaws.com/key/path
-                try:
-                    if '.s3.' in s3_key:
-                        # Extract everything after the bucket name
-                        parts = s3_key.split('.s3.')
-                        if len(parts) > 1:
-                            key_part = parts[1].split('/', 1)
-                            if len(key_part) > 1:
-                                s3_key = key_part[1]  # Get the key path
-                            else:
-                                # Fallback: try to extract from URL path
-                                from urllib.parse import urlparse
-                                parsed = urlparse(s3_key)
-                                s3_key = parsed.path.lstrip('/')
-                except Exception as e:
-                    logger.warning(f"Failed to extract S3 key from URL {s3_key}: {e}")
-            
-            if existing_report:
-                existing_report.pdf_s3_bucket = pdf_result.get('s3_bucket')
-                existing_report.pdf_s3_key = s3_key  # Store only the key, not the full URL
-                existing_report.pdf_file_size = pdf_result.get('file_size')
-                existing_report.generated_at = datetime.utcnow()
-                existing_report.is_generated = True
-            else:
-                report = Report(
+            # === Generate Report ===
+            try:
+                report_service = get_report_service()
+                await report_service.generate_report(
                     session_id=session_id,
-                    pdf_s3_bucket=pdf_result.get('s3_bucket'),
-                    pdf_s3_key=s3_key,  # Store only the key, not the full URL
-                    pdf_file_size=pdf_result.get('file_size'),
-                    generated_at=datetime.utcnow(),
-                    is_generated=True
+                    db=db
                 )
-                db.add(report)
+                logger.info(f"Report generated for session {session_id}")
 
-            await db.commit()
-
-            logger.info(f"Report generated successfully for session {session_id}")
+            except Exception as report_error:
+                logger.error(f"Failed to generate report for session {session_id}: {str(report_error)}", exc_info=True)
 
     except Exception as e:
-        logger.error(f"Error in background coaching/report generation for session {session_id}: {str(e)}", exc_info=True)
+        logger.error(f"Background task failed for session {session_id}: {str(e)}", exc_info=True)
 
+
+# ============================================================================
+# SESSION CRUD ENDPOINTS
+# ============================================================================
 
 @router.post("/", response_model=SessionResponse, status_code=status.HTTP_201_CREATED)
 async def create_session(
     session_data: SessionCreate,
-    user_id: int = Depends(get_current_user_id),
+    current_user_id: int = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db)
 ):
     """
     Create a new session.
 
-    Supports two modes:
-    - audio: Traditional flow (record audio, AI analyzes)
-    - manual: Manual checklist entry (no audio needed)
+    Two session modes:
+    1. AUDIO: User records audio → AI transcribes & analyzes → User reviews
+    2. MANUAL: User directly fills checklist (no audio/transcription)
 
-    User ID should come from authenticated JWT token.
+    Session starts in DRAFT status.
     """
-    # Note: User already validated by JWT authentication dependency (get_current_user_id)
-    # No need for redundant database check
-    from app.models.session import SessionMode
-
-    # Convert lowercase session_mode to uppercase for enum
-    session_mode_value = session_data.session_mode.upper()
-
+    # Create session (map API lowercase "audio"/"manual" to DB enum AUDIO/MANUAL)
+    session_mode = SessionMode(session_data.session_mode.upper())
     session = Session(
-        user_id=user_id,
+        user_id=current_user_id,
         customer_name=session_data.customer_name,
         opportunity_name=session_data.opportunity_name,
         decision_influencer=session_data.decision_influencer,
         deal_stage=session_data.deal_stage,
-        session_mode=SessionMode(session_mode_value),
-        status=SessionStatus.DRAFT,
+        session_mode=session_mode,
+        status=SessionStatus.DRAFT
     )
-
-    logger.info(f"Creating new session for user {user_id} in {session_data.session_mode} mode")
 
     db.add(session)
     await db.commit()
     await db.refresh(session)
 
-    # Note: SessionResponse records will be created automatically after transcription
-    # The AI will analyze the transcript and fill in all 10 checklist items with Yes/No answers
-    logger.info(f"Created session {session.id} for customer '{session.customer_name}'")
-    logger.info(f"Next steps: Upload audio → Transcribe → AI auto-fills checklist → User reviews")
+    logger.info(f"Session {session.id} created by user {current_user_id} in {session_data.session_mode} mode")
 
     return SessionResponse.model_validate(session)
 
 
 @router.get("/", response_model=SessionListResponse)
 async def list_sessions(
-    current_user: User = Depends(get_current_user),
     page: int = 1,
-    page_size: int = 20,
-    status_filter: SessionStatus = None,
+    page_size: int = 50,
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """
-    List sessions for the authenticated user with pagination.
+    List sessions with RBAC filtering.
 
-    RBAC Applied:
+    RBAC:
     - REP: See only own sessions
-    - MANAGER: See all sessions from users in their team
-    - ADMIN: See all sessions from users in their organization
+    - MANAGER: See sessions from users in their team
+    - ADMIN: See sessions from users in their organization
+    - SYSTEM_ADMIN: See all sessions
     """
-    # Build role-based access filter
+    skip = (page - 1) * page_size
+    # Build query with role-based filter
     access_filter = get_session_access_filter(current_user)
 
-    # Build query with RBAC filter
-    query = select(Session).where(access_filter)
+    # Get sessions with user info
+    from sqlalchemy.orm import selectinload
 
-    if status_filter:
-        query = query.where(Session.status == status_filter)
+    query = (
+        select(Session)
+        .where(access_filter)
+        .options(selectinload(Session.user))
+        .order_by(Session.created_at.desc())
+        .offset(skip)
+        .limit(page_size)
+    )
 
-    query = query.order_by(Session.created_at.desc())
-
-    # Get total count with RBAC filter
-    count_query = select(func.count()).select_from(Session).where(access_filter)
-    if status_filter:
-        count_query = count_query.where(Session.status == status_filter)
-
-    total_result = await db.execute(count_query)
-    total = total_result.scalar()
-
-    # Apply pagination
-    offset = (page - 1) * page_size
-    query = query.offset(offset).limit(page_size)
-
-    # Execute query
     result = await db.execute(query)
     sessions = result.scalars().all()
+
+    # Get total count
+    count_query = select(func.count(Session.id)).where(access_filter)
+    count_result = await db.execute(count_query)
+    total = count_result.scalar()
 
     return SessionListResponse(
         sessions=[SessionResponse.model_validate(s) for s in sessions],
@@ -387,12 +218,12 @@ async def get_session(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Get a specific session by ID.
+    Get a specific session.
 
     RBAC Applied:
-    - REP: Can only access own sessions
-    - MANAGER: Can access sessions from users in their team
-    - ADMIN: Can access sessions from users in their organization
+    - REP: Can only view own sessions
+    - MANAGER: Can view sessions from users in their team
+    - ADMIN: Can view sessions from users in their organization
     """
     # Check role-based access
     has_access = await check_session_access(session_id, current_user, db)
@@ -513,20 +344,18 @@ async def get_checklist_for_review(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Get AI-filled checklist for user review.
+    Get checklist items with AI responses for review.
 
-    Returns all 10 checklist items with:
-    - AI answers (Yes/No with reasoning)
-    - User overrides (if any)
+    Returns all 92 checklist items with:
+    - AI answer (Yes/No)
+    - AI reasoning
+    - User override (if any)
     - Coaching questions for each item
-    - Current score (0-100)
-
-    This is the page where user reviews AI answers and can manually change them.
 
     RBAC Applied:
-    - REP: Can only access own session checklists
-    - MANAGER: Can access checklists from users in their team
-    - ADMIN: Can access checklists from users in their organization
+    - REP: Can only view own session checklists
+    - MANAGER: Can view checklists from users in their team
+    - ADMIN: Can view checklists from users in their organization
     """
     # Check role-based access
     has_access = await check_session_access(session_id, current_user, db)
@@ -537,13 +366,13 @@ async def get_checklist_for_review(
             detail="Session not found"
         )
 
-    # Fetch the session
+    # Get session
     session_result = await db.execute(
         select(Session).where(Session.id == session_id)
     )
     session = session_result.scalar_one_or_none()
 
-    # Get all session responses with items and coaching questions
+    # Get all session responses with item details
     from sqlalchemy.orm import selectinload
 
     responses_result = await db.execute(
@@ -560,62 +389,60 @@ async def get_checklist_for_review(
     if not responses:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Checklist not yet generated. Please transcribe the audio first."
+            detail="No checklist responses found for this session. Please transcribe audio or fill checklist first."
         )
 
-    # Build response items
-    items_list = []
+    # Format responses for review
+    items_for_review = []
     total_score = 0
     items_yes = 0
     items_no = 0
 
     for response in responses:
-        # Determine current answer (user override takes precedence)
-        current_answer = response.user_answer if response.user_answer is not None else response.ai_answer
+        item = response.item
 
-        if current_answer:
+        # Use user answer if provided, otherwise AI answer
+        final_answer = response.user_answer if response.user_answer is not None else response.ai_answer
+
+        if final_answer:
             items_yes += 1
             total_score += 10
         else:
             items_no += 1
 
-        # Build item info
-        item_info = ChecklistItemInfo(
-            id=response.item.id,
-            title=response.item.title,
-            definition=response.item.definition,
-            order=response.item.order
-        )
-
-        # Build coaching questions
-        coaching_questions_list = [
+        # Get coaching questions for this item
+        coaching_questions = [
             CoachingQuestionInfo(
-                id=q.id,
-                section=q.section,
-                question=q.question,
-                order=q.order
+                id=cq.id,
+                section=cq.section,
+                question=cq.question,
+                order=cq.order
             )
-            for q in response.item.coaching_questions if q.is_active
+            for cq in item.coaching_questions
         ]
 
-        # Build session response review
-        session_response_review = SessionResponseReview(
-            item=item_info,
-            ai_answer=response.ai_answer,
-            ai_reasoning=response.ai_reasoning or "No reasoning provided",
-            user_answer=response.user_answer,
-            was_changed=response.was_changed,
-            score=response.score,
-            coaching_questions=coaching_questions_list
+        items_for_review.append(
+            SessionResponseReview(
+                item=ChecklistItemInfo(
+                    id=item.id,
+                    title=item.title,
+                    definition=item.definition,
+                    order=item.order
+                ),
+                ai_answer=response.ai_answer,
+                ai_reasoning=response.ai_reasoning,
+                user_answer=response.user_answer,
+                was_changed=response.was_changed,
+                score=response.score,
+                coaching_questions=coaching_questions
+            )
         )
-
-        items_list.append(session_response_review)
 
     return ChecklistReviewResponse(
         session_id=session_id,
         customer_name=session.customer_name,
         opportunity_name=session.opportunity_name,
-        items=items_list,
+        items=items_for_review,
         total_score=total_score,
         items_yes=items_yes,
         items_no=items_no,
@@ -707,19 +534,18 @@ async def submit_manual_checklist(
     Workflow:
     1. Validate session is in manual mode
     2. Create SessionResponse records from manual input
-    3. Calculate scores (same as audio mode)
-    4. Generate AI coaching feedback (without transcript context)
-    5. Mark session as pending review
+    3. Calculate total score
+    4. Update session status to completed
+    5. Generate coaching feedback in background
 
     RBAC Applied:
-    - REP: Can only submit own session checklists
+    - REP: Can only submit own checklists
     - MANAGER: Can submit checklists from users in their team
     - ADMIN: Can submit checklists from users in their organization
     """
-    logger.info(f"Manual checklist submission for session {session_id} by user {current_user.id}")
-
     # Check role-based access
     has_access = await check_session_access(session_id, current_user, db)
+
     if not has_access:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -745,8 +571,8 @@ async def submit_manual_checklist(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={
-                "error": "INVALID_SESSION_MODE",
-                "message": "This endpoint is only for manual mode sessions. This session is in audio mode.",
+                "message": "This endpoint is only for manual mode sessions",
+                "current_mode": session.session_mode.value,
                 "session_mode": session.session_mode.value
             }
         )
@@ -812,6 +638,43 @@ async def submit_manual_checklist(
         items_total=len(response_records)
     )
     db.add(scoring_result)
+    await db.flush()  # Get scoring_result.id for history
+    await db.refresh(scoring_result)
+
+    # Build responses snapshot for version history
+    responses_snapshot = [
+        {
+            "item_id": r.item_id,
+            "answer": r.ai_answer,  # In manual mode, ai_answer IS the user's answer
+            "score": r.score
+        }
+        for r in response_records
+    ]
+
+    # Create score history record (next version number to avoid unique constraint)
+    from app.models.scoring import ScoreHistory
+    version_result = await db.execute(
+        select(func.coalesce(func.max(ScoreHistory.version_number), 0)).where(
+            ScoreHistory.session_id == session_id
+        )
+    )
+    next_version = (version_result.scalar() or 0) + 1
+    score_history_entry = ScoreHistory(
+        session_id=session_id,
+        scoring_result_id=scoring_result.id,
+        total_score=total_score,
+        risk_band=risk_band,
+        items_validated=sum(1 for r in response_records if r.score > 0),
+        items_total=len(response_records),
+        calculated_at=datetime.utcnow(),
+        score_change=None,  # No previous version to compare
+        trigger_event="initial_submission",
+        created_by_user_id=current_user.id,
+        version_number=next_version,
+        changes_count=None,  # First version, no changes
+        responses_snapshot=responses_snapshot
+    )
+    db.add(score_history_entry)
 
     # Update session status
     session.status = SessionStatus.COMPLETED
@@ -820,7 +683,7 @@ async def submit_manual_checklist(
     await db.commit()
     await db.refresh(session)
 
-    logger.info(f"Session {session_id} scoring complete: {total_score} points, {risk_band.value} band")
+    logger.info(f"Session {session_id} scoring complete: {total_score} points, {risk_band.value} band (Version {next_version} created)")
 
     # Generate coaching feedback in background (without transcript)
     background_tasks.add_task(
@@ -937,6 +800,44 @@ async def submit_checklist(
         )
         db.add(scoring_result)
 
+    await db.flush()  # Get scoring_result.id for history
+    await db.refresh(scoring_result)
+
+    # Build responses snapshot for version history
+    responses_snapshot = [
+        {
+            "item_id": r.item_id,
+            "answer": r.user_answer if r.user_answer is not None else r.ai_answer,
+            "score": r.score
+        }
+        for r in responses
+    ]
+
+    # Create score history record (next version number to avoid unique constraint)
+    from app.models.scoring import ScoreHistory
+    version_result = await db.execute(
+        select(func.coalesce(func.max(ScoreHistory.version_number), 0)).where(
+            ScoreHistory.session_id == session_id
+        )
+    )
+    next_version = (version_result.scalar() or 0) + 1
+    score_history_entry = ScoreHistory(
+        session_id=session_id,
+        scoring_result_id=scoring_result.id,
+        total_score=total_score,
+        risk_band=risk_band,
+        items_validated=items_yes,
+        items_total=len(responses),
+        calculated_at=datetime.utcnow(),
+        score_change=None,  # No previous version to compare
+        trigger_event="initial_submission",
+        created_by_user_id=current_user.id,
+        version_number=next_version,
+        changes_count=None,  # First version, no changes
+        responses_snapshot=responses_snapshot
+    )
+    db.add(score_history_entry)
+
     # Update session status
     session.status = SessionStatus.COMPLETED
     session.submitted_at = datetime.utcnow()
@@ -945,11 +846,9 @@ async def submit_checklist(
 
     logger.info(f"Checklist submitted for session {session_id}")
     logger.info(f"Final score: {total_score}/100 ({items_yes} YES, {items_no} NO)")
-    logger.info(f"Risk band: {risk_band.value}")
+    logger.info(f"Risk band: {risk_band.value} (Version {next_version} created)")
 
-    # Generate coaching synchronously (user waits for results)
-    logger.info(f"Generating coaching feedback synchronously...")
-
+    # Generate coaching feedback synchronously for immediate return
     try:
         from app.services.coaching_service import get_coaching_service
         from app.models.scoring import CoachingFeedback
@@ -981,16 +880,13 @@ async def submit_checklist(
             existing_coaching.generated_at = datetime.utcnow()
             coaching_feedback = existing_coaching
         else:
-            # Create new coaching feedback
+            # Create new coaching feedback record
             coaching_feedback = CoachingFeedback(
                 session_id=session_id,
                 feedback_text=feedback_data['feedback_text'],
                 strengths=feedback_data.get('strengths'),
                 improvement_areas=feedback_data.get('improvement_areas'),
                 action_items=feedback_data.get('action_items'),
-                audio_s3_bucket=None,  # Audio generation can be done later via separate endpoint
-                audio_s3_key=None,
-                audio_duration=None,
                 generated_at=datetime.utcnow()
             )
             db.add(coaching_feedback)
@@ -998,14 +894,14 @@ async def submit_checklist(
         await db.commit()
         await db.refresh(coaching_feedback)
 
-        logger.info(f"✅ Coaching feedback generated successfully")
+        logger.info(f"Coaching feedback generated for session {session_id}")
 
-        # Trigger report generation in background (it's optional and can take longer)
+        # Queue PDF report generation in background
         # background_tasks.add_task(
-        #     generate_coaching_in_background,
-        #     session_id=session_id,
-        #     total_score=total_score,
-        #     risk_band=risk_band
+        #     generate_report_in_background,
+        #     session_id,
+        #     total_score,
+        #     risk_band
         # )
 
         return ChecklistSubmitResponse(
@@ -1035,3 +931,184 @@ async def submit_checklist(
             submitted_at=session.submitted_at,
             message=f"Checklist submitted successfully! Score: {total_score}/100. Coaching generation failed - please retry via /coaching endpoint."
         )
+
+
+@router.post("/{session_id}/checklist/resubmit")
+async def resubmit_checklist(
+    session_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Re-submit checklist after making edits to create a new version.
+
+    This endpoint creates a new ScoreHistory record (version) with:
+    - Complete snapshot of all current checklist responses
+    - Updated score calculation
+    - Change tracking from previous version
+
+    Workflow:
+    1. User edits checklist answers (via PUT /checklist/{item_id})
+    2. User clicks "Save as New Version" → calls this endpoint
+    3. System creates Version N with current state
+    4. User can view version history to see progression
+
+    RBAC Applied:
+    - REP: Can only resubmit own checklists
+    - MANAGER: Can resubmit team checklists
+    - ADMIN: Can resubmit org checklists
+    """
+    # Check role-based access
+    has_access = await check_session_access(session_id, current_user, db)
+
+    if not has_access:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Session not found"
+        )
+
+    # Get session
+    session_result = await db.execute(
+        select(Session).where(Session.id == session_id)
+    )
+    session = session_result.scalar_one_or_none()
+
+    if not session:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Session not found"
+        )
+
+    # Verify session is completed
+    if session.status != SessionStatus.COMPLETED:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Can only resubmit completed sessions"
+        )
+
+    # Get all current responses
+    responses_result = await db.execute(
+        select(SessionResponseModel).where(
+            SessionResponseModel.session_id == session_id
+        )
+    )
+    responses = responses_result.scalars().all()
+
+    if not responses:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No checklist responses found for this session"
+        )
+
+    # Recalculate score from current responses
+    total_score = 0
+    items_validated = 0
+
+    for response in responses:
+        # Use user answer if provided, otherwise AI answer
+        final_answer = response.user_answer if response.user_answer is not None else response.ai_answer
+        if final_answer:
+            total_score += 10
+            items_validated += 1
+
+    # Determine risk band
+    if total_score >= 70:
+        risk_band = RiskBand.GREEN
+    elif total_score >= 40:
+        risk_band = RiskBand.YELLOW
+    else:
+        risk_band = RiskBand.RED
+
+    # Get previous version to calculate changes
+    from app.models.scoring import ScoreHistory
+
+    prev_history_result = await db.execute(
+        select(ScoreHistory)
+        .where(ScoreHistory.session_id == session_id)
+        .order_by(ScoreHistory.version_number.desc())
+        .limit(1)
+    )
+    prev_history = prev_history_result.scalar_one_or_none()
+
+    if not prev_history:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No previous version found. Please submit checklist first."
+        )
+
+    previous_score = prev_history.total_score
+    score_change = total_score - previous_score
+    version_number = prev_history.version_number + 1
+
+    # Calculate how many answers changed from previous version
+    prev_answers = {r["item_id"]: r["answer"] for r in prev_history.responses_snapshot}
+    current_answers = {
+        r.item_id: (r.user_answer if r.user_answer is not None else r.ai_answer)
+        for r in responses
+    }
+    changes_count = sum(
+        1 for item_id, answer in current_answers.items()
+        if prev_answers.get(item_id) != answer
+    )
+
+    # Update ScoringResult (delete old, create new)
+    old_scoring_result = await db.execute(
+        select(ScoringResult).where(ScoringResult.session_id == session_id)
+    )
+    old_scoring_obj = old_scoring_result.scalar_one_or_none()
+
+    if old_scoring_obj:
+        await db.delete(old_scoring_obj)
+        await db.flush()
+
+    new_scoring = ScoringResult(
+        session_id=session_id,
+        total_score=total_score,
+        risk_band=risk_band,
+        items_validated=items_validated,
+        items_total=len(responses)
+    )
+    db.add(new_scoring)
+    await db.flush()
+    await db.refresh(new_scoring)
+
+    # Build responses snapshot
+    responses_snapshot = [
+        {
+            "item_id": r.item_id,
+            "answer": r.user_answer if r.user_answer is not None else r.ai_answer,
+            "score": r.score
+        }
+        for r in responses
+    ]
+
+    # Create new ScoreHistory (new version)
+    score_history_entry = ScoreHistory(
+        session_id=session_id,
+        scoring_result_id=new_scoring.id,
+        total_score=total_score,
+        risk_band=risk_band,
+        items_validated=items_validated,
+        items_total=len(responses),
+        calculated_at=datetime.utcnow(),
+        score_change=score_change,
+        trigger_event="resubmission",
+        created_by_user_id=current_user.id,
+        version_number=version_number,
+        changes_count=changes_count,
+        responses_snapshot=responses_snapshot
+    )
+    db.add(score_history_entry)
+    await db.commit()
+
+    logger.info(f"Session {session_id} resubmitted: Version {version_number}, Score {total_score}, {changes_count} changes")
+
+    return {
+        "message": f"Version {version_number} created successfully",
+        "version_number": version_number,
+        "total_score": total_score,
+        "risk_band": risk_band.value,
+        "changes_count": changes_count,
+        "score_change": score_change,
+        "previous_score": previous_score
+    }

@@ -3,6 +3,7 @@ Invitation Service
 Handles user invitation logic, token generation, and email sending
 """
 import secrets
+import string
 from datetime import datetime, timedelta
 from typing import Optional, Dict
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,8 +11,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from app.models.invitation import Invitation
-from app.models.user import User, Organization, Team
+from app.models.user import User, UserRole, Organization, Team
 from app.services.email_service import get_email_service
+from app.services.auth_service import auth_service
 
 
 class InvitationService:
@@ -30,6 +32,30 @@ class InvitationService:
         """
         return secrets.token_urlsafe(32)
 
+    def generate_temp_password(self) -> str:
+        """
+        Generate a secure temporary password.
+
+        Returns:
+            12-character password with mix of uppercase, lowercase, digits, and symbols
+        """
+        # Ensure password has at least one of each type
+        password_chars = [
+            secrets.choice(string.ascii_uppercase),  # At least one uppercase
+            secrets.choice(string.ascii_lowercase),  # At least one lowercase
+            secrets.choice(string.digits),           # At least one digit
+            secrets.choice('!@#$%^&*'),              # At least one special char
+        ]
+
+        # Fill remaining 8 characters randomly
+        all_chars = string.ascii_letters + string.digits + '!@#$%^&*'
+        password_chars.extend(secrets.choice(all_chars) for _ in range(8))
+
+        # Shuffle to avoid predictable pattern
+        secrets.SystemRandom().shuffle(password_chars)
+
+        return ''.join(password_chars)
+
     async def create_invitation(
         self,
         db: AsyncSession,
@@ -41,7 +67,7 @@ class InvitationService:
         frontend_url: str = "http://localhost:3000"
     ) -> Invitation:
         """
-        Create a new invitation and send invitation email.
+        Create a new invitation, create user account with temporary password, and send invitation email.
 
         Args:
             db: Database session
@@ -81,9 +107,26 @@ class InvitationService:
         if existing_inv:
             raise ValueError(f"An active invitation already exists for {email}")
 
-        # Generate token and expiry
+        # Generate temporary password and token
+        temp_password = self.generate_temp_password()
         token = self.generate_token()
         expires_at = datetime.utcnow() + timedelta(days=self.token_expiry_days)
+
+        # Create user account immediately with temporary password
+        # DB userrole enum expects uppercase (REP, MANAGER, ADMIN)
+        user_role = UserRole(role.upper())
+        new_user = User(
+            email=email,
+            password_hash=auth_service.hash_password(temp_password),
+            organization_id=organization_id,
+            team_id=team_id,
+            role=user_role,
+            is_active=True,
+            is_verified=False,  # Will be verified when they accept invitation
+            must_change_password=True  # Force password change on first login
+        )
+        db.add(new_user)
+        await db.flush()
 
         # Create invitation
         invitation = Invitation(
@@ -121,7 +164,7 @@ class InvitationService:
             if team:
                 team_name = team.name
 
-        # Send invitation email
+        # Send invitation email with temporary password
         invite_url = f"{frontend_url}/accept-invite?token={token}"
         inviter_name = f"{inviter.first_name} {inviter.last_name}"
 
@@ -131,7 +174,8 @@ class InvitationService:
             inviter_name=inviter_name,
             invite_url=invite_url,
             role=role,
-            team_name=team_name
+            team_name=team_name,
+            temp_password=temp_password  # Pass temporary password to email
         )
 
         await db.commit()
@@ -184,7 +228,7 @@ class InvitationService:
         user_id: int
     ) -> bool:
         """
-        Accept an invitation and add user to organization/team.
+        Accept an invitation and verify user account.
 
         Args:
             db: Database session
@@ -225,10 +269,8 @@ class InvitationService:
         if user.email.lower() != invitation.email.lower():
             raise ValueError("Email address does not match invitation")
 
-        # Update user with organization and team
-        user.organization_id = invitation.organization_id
-        user.team_id = invitation.team_id
-        user.role = invitation.role
+        # Mark user as verified (they successfully logged in with temp password)
+        user.is_verified = True
 
         # Mark invitation as accepted
         invitation.accepted_at = datetime.utcnow()

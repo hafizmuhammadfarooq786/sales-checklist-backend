@@ -70,6 +70,7 @@ class Settings(BaseSettings):
     )
 
     # Frontend URL (for invitation emails and redirects)
+    # Set in .env to your deployed UI so invitation "Accept" links point to your app (e.g. https://app.yourdomain.com)
     FRONTEND_URL: str = Field(default="http://localhost:3000")
 
     # Rate Limiting
