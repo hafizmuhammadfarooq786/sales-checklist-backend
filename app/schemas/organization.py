@@ -4,7 +4,7 @@ Pydantic models for organization and settings validation
 """
 from datetime import datetime
 from typing import Optional, Dict, Any
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class OrganizationBase(BaseModel):
@@ -42,6 +42,13 @@ class OrganizationSettingsBase(BaseModel):
     primary_color: Optional[str] = Field(None, pattern="^#[0-9A-Fa-f]{6}$")
     settings: Optional[Dict[str, Any]] = None
 
+    @field_validator("default_role", mode="before")
+    @classmethod
+    def normalize_default_role(cls, v: Optional[str]) -> str:
+        if v is None or v == "":
+            return "rep"
+        return v.strip().lower()
+
 
 class OrganizationSettingsUpdate(BaseModel):
     """Schema for updating organization settings"""
@@ -50,6 +57,13 @@ class OrganizationSettingsUpdate(BaseModel):
     logo_url: Optional[str] = None
     primary_color: Optional[str] = Field(None, pattern="^#[0-9A-Fa-f]{6}$")
     settings: Optional[Dict[str, Any]] = None
+
+    @field_validator("default_role", mode="before")
+    @classmethod
+    def normalize_default_role_update(cls, v: Optional[str]) -> Optional[str]:
+        if v is None or v == "":
+            return None
+        return v.strip().lower()
 
 
 class OrganizationSettingsResponse(OrganizationSettingsBase):

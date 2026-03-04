@@ -75,6 +75,13 @@ class User(Base, TimestampMixin):
     email_verification_token = Column(String(255), nullable=True)
     email_verification_expires = Column(DateTime, nullable=True)
 
+    # Soft delete
+    deleted_at = Column(DateTime, nullable=True, index=True)
+    deleted_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+
+    # Password management
+    must_change_password = Column(Boolean, default=False, nullable=False)
+
     # Relationships
     organization = relationship("Organization", back_populates="users")
     team = relationship("Team", back_populates="users")

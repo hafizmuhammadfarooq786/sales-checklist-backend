@@ -201,10 +201,10 @@ async def create_team(
             detail=f"Team with name '{team_data.name}' already exists in this organization"
         )
 
-    # Create team
+    # Create team (Team model has no description column; exclude from dump)
     new_team = Team(
         organization_id=current_user.organization_id,
-        **team_data.model_dump()
+        **team_data.model_dump(exclude={"description"})
     )
     db.add(new_team)
     await db.commit()
@@ -243,8 +243,8 @@ async def update_team(
             detail=f"Team with ID {team_id} not found in your organization"
         )
 
-    # Update fields
-    update_data = team_data.model_dump(exclude_unset=True)
+    # Update fields (Team model has no description column; exclude it)
+    update_data = team_data.model_dump(exclude_unset=True, exclude={"description"})
     for field, value in update_data.items():
         setattr(team, field, value)
 
@@ -323,7 +323,10 @@ async def list_organization_users(
 
     query = select(User).options(
         selectinload(User.team)
-    ).where(User.organization_id == current_user.organization_id)
+    ).where(
+        User.organization_id == current_user.organization_id,
+        User.deleted_at.is_(None)  # Exclude soft-deleted users
+    )
 
     # Apply RBAC - MANAGER can only see their team
     if current_user.role == UserRole.MANAGER:

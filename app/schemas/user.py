@@ -37,6 +37,7 @@ class UserResponse(UserBase):
     team_id: Optional[int] = None
     is_active: bool
     is_verified: bool
+    must_change_password: bool = False
     last_login: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
