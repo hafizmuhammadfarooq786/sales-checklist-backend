@@ -66,12 +66,26 @@ async def lifespan(app: FastAPI):
     logger.info(f"Environment: {settings.ENVIRONMENT}")
     logger.info(f"API Version: {settings.API_V1_STR}")
 
-    async with engine.begin() as conn:
-        # Create tables if they don't exist (dev only)
-        if settings.ENVIRONMENT == "development":
-            logger.info("Development mode: Creating database tables if they don't exist")
-            await conn.run_sync(Base.metadata.create_all)
-            logger.info("Database tables initialized")
+    try:
+        async with engine.begin() as conn:
+            # Create tables if they don't exist (dev only)
+            if settings.ENVIRONMENT == "development":
+                logger.info("Development mode: Creating database tables if they don't exist")
+                await conn.run_sync(Base.metadata.create_all)
+                logger.info("Database tables initialized")
+    except OSError as e:
+        msg = (
+            "Database connection failed (cannot resolve host or connect). "
+            "Check DATABASE_URL in .env: ensure the host is correct and you have network access. "
+            "For a local PostgreSQL use e.g. postgresql+asyncpg://user:pass@localhost:5432/dbname"
+        )
+        logger.error("%s Original error: %s", msg, e)
+        raise RuntimeError(msg) from e
+    except Exception as e:
+        logger.exception("Database startup failed")
+        raise RuntimeError(
+            "Database connection failed. Check DATABASE_URL in .env and that the database is running."
+        ) from e
 
     logger.info("API startup complete")
     yield
