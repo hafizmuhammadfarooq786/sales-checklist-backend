@@ -8,6 +8,7 @@ from jose import jwt, JWTError
 from passlib.context import CryptContext
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_
+from sqlalchemy.orm import selectinload
 
 from app.core.config import settings
 from app.models.user import User
@@ -61,42 +62,53 @@ class AuthService:
         return secrets.token_urlsafe(32)
     
     async def authenticate_user(self, db: AsyncSession, email: str, password: str) -> Optional[User]:
-        """Authenticate a user with email and password"""
+        """
+        Authenticate a user with email and password.
+
+        Performance optimization: Uses eager loading to prevent N+1 queries
+        when building the token response with user data.
+        """
         result = await db.execute(
-            select(User).where(
+            select(User)
+            .options(
+                selectinload(User.organization),
+                selectinload(User.team)
+            )
+            .where(
                 and_(
                     User.email == email,
-                    User.is_active == True
+                    User.is_active == True,
+                    User.deleted_at.is_(None)  # Exclude soft-deleted users
                 )
             )
         )
         user = result.scalar_one_or_none()
-        
+
         if not user:
             return None
-        
+
         # Check if account is locked
         if user.locked_until and user.locked_until > datetime.utcnow():
             return None
-        
-        # Verify password
+
+        # Verify password (intentionally slow - bcrypt security feature)
         if not self.verify_password(password, user.password_hash):
             # Increment failed attempts
             user.failed_login_attempts = (user.failed_login_attempts or 0) + 1
-            
+
             # Lock account after 5 failed attempts for 30 minutes
             if user.failed_login_attempts >= 5:
                 user.locked_until = datetime.utcnow() + timedelta(minutes=30)
-            
+
             await db.commit()
             return None
-        
+
         # Reset failed attempts on successful login
         user.failed_login_attempts = 0
         user.locked_until = None
         user.last_login = datetime.utcnow()
         await db.commit()
-        
+
         return user
     
     async def create_user(self, db: AsyncSession, user_data: UserCreate) -> User:
@@ -121,11 +133,16 @@ class AuthService:
         return user
     
     async def create_token_response(self, user: User) -> Token:
-        """Create a complete token response with user data"""
+        """
+        Create a complete token response with user data.
+
+        All user fields are already loaded via eager loading in authenticate_user,
+        so this method doesn't trigger additional database queries.
+        """
         access_token = self.create_access_token(
             data={"sub": str(user.id), "email": user.email, "role": user.role.value}
         )
-        
+
         user_response = UserResponse(
             id=user.id,
             email=user.email,
@@ -136,11 +153,12 @@ class AuthService:
             team_id=user.team_id,
             is_active=user.is_active,
             is_verified=user.is_verified,
+            must_change_password=user.must_change_password,
             last_login=user.last_login,
             created_at=user.created_at,
             updated_at=user.updated_at
         )
-        
+
         return Token(
             access_token=access_token,
             token_type="bearer",
