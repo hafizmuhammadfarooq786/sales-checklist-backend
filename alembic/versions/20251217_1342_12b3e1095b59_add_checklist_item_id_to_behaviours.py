@@ -34,7 +34,7 @@ def upgrade() -> None:
         "Decision Influencer — Mentor": "Mentor",
         "Trigger Priority": "Trigger Priority",
         "Individual Impact — What's in it for Me?": "Individual Impact",
-        "Finalizer": "Finalizer",
+        "Finalizer": "Decision Making Process",
         "Alternatives": "Alternatives",
         "Our Solution Ranking": "Our Solution Ranking"
     }

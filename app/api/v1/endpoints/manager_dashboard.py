@@ -241,7 +241,7 @@ async def get_dashboard_stats(
     return DashboardStats(
         total_active_checklists=total_active,
         total_team_members=len(team_member_ids),
-        average_team_score=round(avg_score, 1) if avg_score else None,
+        average_team_score=round(avg_score / 5) * 5 if avg_score else None,
         total_alerts=total_alerts
     )
 
@@ -746,7 +746,7 @@ async def get_dashboard_overview(
     stats = DashboardStats(
         total_active_checklists=total_active,
         total_team_members=len(team_member_ids),
-        average_team_score=round(avg_score, 1) if avg_score else None,
+        average_team_score=round(avg_score / 5) * 5 if avg_score else None,
         total_alerts=total_alerts
     )
 
