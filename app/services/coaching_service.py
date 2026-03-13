@@ -31,7 +31,7 @@ HARDCODED_COACHING_FEEDBACK = {
 
     "Sales Target": "Understands — from the customer's perspective — what they are planning to buy, how much, why, when, and how the decision will be made.",
 
-    "Finalizer": "Understands — from the customer's perspective — what they are buying, how much, why, when, and how the decision will be made. Verified through evidence, not assumption.",
+    "Decision Making Process": "Understands — from the customer's perspective — what they are buying, how much, why, when, and how the decision will be made. Verified through evidence, not assumption.",
 
     "Decision Influencers (DI)": "Specifiers define what gets bought. Utilizers decide if it will work. Finalizers decide whether it gets bought.",
 
