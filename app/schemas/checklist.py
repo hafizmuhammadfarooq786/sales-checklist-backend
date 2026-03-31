@@ -122,7 +122,7 @@ class ChecklistReviewResponse(BaseModel):
     """Complete checklist review for a session (all 10 items)"""
     session_id: int
     customer_name: str
-    opportunity_name: Optional[str] = None
+    opportunity_name: str
     items: List[SessionResponseReview]
     total_score: int  # Sum of all scores (0-100)
     items_yes: int  # Count of YES answers (0-10)

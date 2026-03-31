@@ -1,7 +1,7 @@
 """
 Pydantic schemas for Session endpoints
 """
-from pydantic import BaseModel, Field, field_serializer
+from pydantic import BaseModel, Field, field_serializer, field_validator, ConfigDict
 from typing import Optional, List, Literal
 from datetime import datetime
 from app.models.session import SessionStatus, SessionMode, DealStage
@@ -10,7 +10,7 @@ from app.models.session import SessionStatus, SessionMode, DealStage
 class SessionCreate(BaseModel):
     """Schema for creating a session"""
     customer_name: str = Field(..., min_length=1, max_length=255)
-    opportunity_name: Optional[str] = Field(None, max_length=255)
+    opportunity_name: str = Field(..., min_length=1, max_length=255)
     decision_influencer: Optional[str] = Field(None, max_length=255)
     deal_stage: Optional[DealStage] = None
     session_mode: Literal["audio", "manual"] = Field(
@@ -18,11 +18,26 @@ class SessionCreate(BaseModel):
         description="Session input mode: 'audio' (record audio) or 'manual' (fill checklist manually)"
     )
 
+    @field_validator("customer_name", "opportunity_name", mode="before")
+    @classmethod
+    def strip_and_require(cls, v: Optional[str]) -> str:
+        """
+        Normalize whitespace and ensure identity fields are non-empty.
+        """
+        if v is None:
+            raise ValueError("Field is required")
+        if isinstance(v, str):
+            v = v.strip()
+        if not v:
+            raise ValueError("Field cannot be empty")
+        return v
+
 
 class SessionUpdate(BaseModel):
-    """Schema for updating a session"""
-    customer_name: Optional[str] = Field(None, max_length=255)
-    opportunity_name: Optional[str] = Field(None, max_length=255)
+    """Schema for updating a session (identity fields are immutable; omitted from model)."""
+
+    model_config = ConfigDict(extra="forbid")
+
     decision_influencer: Optional[str] = Field(None, max_length=255)
     deal_stage: Optional[DealStage] = None
     status: Optional[SessionStatus] = None
@@ -33,7 +48,7 @@ class SessionResponse(BaseModel):
     id: int
     user_id: int
     customer_name: str
-    opportunity_name: Optional[str] = None
+    opportunity_name: str
     decision_influencer: Optional[str] = None
     deal_stage: Optional[DealStage] = None
     session_mode: SessionMode
