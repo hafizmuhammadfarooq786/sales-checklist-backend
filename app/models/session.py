@@ -51,7 +51,7 @@ class Session(Base, TimestampMixin):
 
     # Customer/Opportunity details
     customer_name = Column(String(255), nullable=False)
-    opportunity_name = Column(String(255), nullable=True)
+    opportunity_name = Column(String(255), nullable=False)
     decision_influencer = Column(String(255), nullable=True)
     deal_stage = Column(SQLEnum(DealStage), nullable=True)
 

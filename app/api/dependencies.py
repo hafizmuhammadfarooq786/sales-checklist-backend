@@ -4,7 +4,7 @@ API Dependencies for authentication and authorization
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, true
 from typing import Optional
 
 from app.db.session import get_db
@@ -141,6 +141,9 @@ def get_session_access_filter(current_user: User):
     """
     from app.models.session import Session
     from sqlalchemy import and_
+
+    if current_user.role == UserRole.SYSTEM_ADMIN:
+        return true()
 
     if current_user.role == UserRole.ADMIN:
         # Admin sees all sessions in their organization (excluding deleted users)

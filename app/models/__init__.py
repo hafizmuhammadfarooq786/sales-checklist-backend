@@ -20,6 +20,7 @@ from app.models.report import Report, ReportFormat
 from app.models.invitation import Invitation
 from app.models.organization_settings import OrganizationSettings
 from app.models.manager_note import ManagerNote
+from app.models.checklist_item_note import ChecklistItemNote
 
 # Export all for easy imports
 __all__ = [
@@ -49,4 +50,5 @@ __all__ = [
     "Invitation",
     "OrganizationSettings",
     "ManagerNote",
+    "ChecklistItemNote",
 ]

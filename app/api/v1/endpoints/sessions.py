@@ -110,10 +110,101 @@ async def generate_coaching_in_background(session_id: int, total_score: float, r
             # === Generate Report ===
             try:
                 report_service = get_report_service()
-                await report_service.generate_report(
+                # Build report payload for the current ReportService API.
+                category_scores = {}
+                validated_count = 0
+                responses_data = []
+                for resp in responses:
+                    item = resp.item
+                    if not item or not item.category:
+                        continue
+
+                    cat_id = item.category.id
+                    if cat_id not in category_scores:
+                        category_scores[cat_id] = {
+                            "name": item.category.name,
+                            "score": 0,
+                            "max_score": 0,
+                        }
+                    category_scores[cat_id]["max_score"] += 10
+
+                    final_answer = (
+                        resp.user_answer if resp.user_answer is not None else resp.ai_answer
+                    )
+                    if final_answer is True:
+                        category_scores[cat_id]["score"] += 10
+                        validated_count += 1
+
+                    responses_data.append(
+                        {
+                            "id": resp.id,
+                            "item_id": resp.item_id,
+                            "is_validated": final_answer,
+                            "ai_answer": resp.ai_answer,
+                            "user_answer": resp.user_answer,
+                            "item": {
+                                "id": item.id,
+                                "title": item.title or f"Checklist Item {item.id}",
+                                "order": item.order,
+                                "definition": item.definition or "",
+                                "category": {
+                                    "id": item.category.id,
+                                    "name": item.category.name or "Uncategorized",
+                                },
+                            },
+                        }
+                    )
+
+                scoring_data = {
+                    "total_score": total_score,
+                    "risk_band": risk_band.value if hasattr(risk_band, "value") else risk_band,
+                    "category_scores": category_scores,
+                    "top_strengths": [],
+                    "top_gaps": [],
+                    "items_validated": validated_count,
+                    "items_total": len(responses),
+                }
+
+                session_data = {
+                    "customer_name": session.customer_name,
+                    "opportunity_name": session.opportunity_name,
+                    "deal_stage": session.deal_stage,
+                    "created_at": session.created_at,
+                }
+
+                pdf_result = await report_service.generate_session_report(
                     session_id=session_id,
-                    db=db
+                    user_id=session.user_id,
+                    session_data=session_data,
+                    scoring_data=scoring_data,
+                    coaching_data=None,
+                    responses_data=responses_data,
                 )
+
+                # Upsert reports table row so report endpoints can resolve it.
+                report_result = await db.execute(
+                    select(Report).where(Report.session_id == session_id)
+                )
+                existing_report = report_result.scalar_one_or_none()
+                s3_key = pdf_result.get("s3_key") or pdf_result.get("pdf_url")
+                if existing_report:
+                    existing_report.pdf_s3_bucket = pdf_result.get("s3_bucket")
+                    existing_report.pdf_s3_key = s3_key
+                    existing_report.pdf_file_size = pdf_result.get("file_size")
+                    existing_report.generated_at = datetime.utcnow()
+                    existing_report.is_generated = True
+                else:
+                    db.add(
+                        Report(
+                            session_id=session_id,
+                            pdf_s3_bucket=pdf_result.get("s3_bucket"),
+                            pdf_s3_key=s3_key,
+                            pdf_file_size=pdf_result.get("file_size"),
+                            generated_at=datetime.utcnow(),
+                            is_generated=True,
+                        )
+                    )
+                await db.commit()
                 logger.info(f"Report generated for session {session_id}")
 
             except Exception as report_error:
@@ -273,8 +364,8 @@ async def update_session(
     )
     session = result.scalar_one_or_none()
 
-    # Update fields
     update_data = session_data.model_dump(exclude_unset=True)
+
     for field, value in update_data.items():
         setattr(session, field, value)
 

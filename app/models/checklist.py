@@ -47,6 +47,9 @@ class ChecklistItem(Base, TimestampMixin):
     coaching_questions = relationship("CoachingQuestion", back_populates="item", cascade="all, delete-orphan")
     session_responses = relationship("SessionResponse", back_populates="item")
     behaviours = relationship("ChecklistItemBehaviour", back_populates="checklist_item", cascade="all, delete-orphan")
+    item_notes = relationship(
+        "ChecklistItemNote", back_populates="checklist_item", cascade="all, delete-orphan"
+    )
 
 
 class CoachingQuestion(Base, TimestampMixin):

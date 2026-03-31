@@ -81,7 +81,7 @@ class ActiveChecklist(BaseModel):
     """Active checklist summary"""
     session_id: int
     customer_name: str
-    opportunity_name: Optional[str] = None
+    opportunity_name: str
     salesperson_name: str
     salesperson_id: int
     score: Optional[int] = None

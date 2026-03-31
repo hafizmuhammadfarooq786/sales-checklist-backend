@@ -17,6 +17,7 @@ from app.api.v1.endpoints import (
     organization,
     manager_notes,
     manager_dashboard,
+    notes,
 )
 from app.api.v1.endpoints import responses_simple as responses
 
@@ -38,6 +39,7 @@ api_router.include_router(admin.router, prefix="/admin", tags=["Admin - SYSTEM_A
 api_router.include_router(organization.router, prefix="/organization", tags=["Organization Management"])
 api_router.include_router(manager_notes.router, prefix="/sessions", tags=["Manager Notes"])
 api_router.include_router(manager_dashboard.router, prefix="/manager/dashboard", tags=["Manager Dashboard"])
+api_router.include_router(notes.router, prefix="/notes", tags=["Checklist Item Notes"])
 
 
 @api_router.get("/")
@@ -51,6 +53,7 @@ async def api_root():
             "auth": "/auth",
             "checklists": "/checklists",
             "sessions": "/sessions",
+            "notes": "/notes",
             "users": "/users",
             "admin": "/admin (SYSTEM_ADMIN only)",
             "organization": "/organization (ADMIN/MANAGER)",
