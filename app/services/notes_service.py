@@ -8,7 +8,7 @@ import json
 import re
 from typing import Any, Dict, List, Optional, Sequence
 
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -26,6 +26,14 @@ from app.schemas.notes import (
     NotesBulkUpsertResponse,
     NotesSessionBundleOut,
 )
+
+
+def ensure_note_owner(active: ChecklistItemNote, user_id: int) -> None:
+    if active.created_by_user_id != user_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only the note creator can edit or delete this note",
+        )
 
 
 def normalize_identity_part(value: str) -> str:
@@ -103,6 +111,8 @@ def history_entry_out(row: ChecklistItemNote) -> NoteHistoryEntryOut:
     editor = row.updated_by_user
     sc = row.structured_content
     return NoteHistoryEntryOut(
+        id=row.id,
+        checklist_item_id=row.checklist_item_id,
         version=row.version,
         note_text=row.note_text,
         decision_influencers=list(row.decision_influencers)
@@ -185,13 +195,32 @@ async def upsert_single(
         return active
 
     if active:
-        active.is_active = False
+        ensure_note_owner(active, user_id)
+        active.note_text = note_text
+        active.decision_influencers = stored_infl
+        active.structured_content = structured_content
+        active.updated_by_user_id = user_id
         await db.flush()
-        next_version = active.version + 1
-        prev_id = active.id
-    else:
-        next_version = 1
-        prev_id = None
+        return await fetch_note_with_editor(db, active.id)
+
+    max_ver_res = await db.execute(
+        select(func.max(ChecklistItemNote.version)).where(
+            ChecklistItemNote.checklist_item_id == checklist_item_id,
+            ChecklistItemNote.opportunity_key == opportunity_key,
+        )
+    )
+    max_ver = max_ver_res.scalar_one_or_none() or 0
+
+    prev_res = await db.execute(
+        select(ChecklistItemNote.id)
+        .where(
+            ChecklistItemNote.checklist_item_id == checklist_item_id,
+            ChecklistItemNote.opportunity_key == opportunity_key,
+        )
+        .order_by(ChecklistItemNote.version.desc())
+        .limit(1)
+    )
+    prev_id = prev_res.scalar_one_or_none()
 
     row = ChecklistItemNote(
         checklist_item_id=checklist_item_id,
@@ -205,7 +234,7 @@ async def upsert_single(
         created_by_user_id=user_id,
         updated_by_user_id=user_id,
         is_active=True,
-        version=next_version,
+        version=max_ver + 1,
         previous_version_id=prev_id,
     )
     db.add(row)
@@ -340,7 +369,7 @@ async def soft_delete_item(
     opportunity_key: str,
     checklist_item_id: int,
     user_id: int,
-) -> ChecklistItemNote:
+) -> Optional[ChecklistItemNote]:
     await validate_checklist_item_ids(db, [checklist_item_id])
     active = await get_active_note(db, checklist_item_id, opportunity_key)
     if not active:
@@ -348,23 +377,80 @@ async def soft_delete_item(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="No active note for this checklist item",
         )
-    active.is_active = False
-    await db.flush()
-    row = ChecklistItemNote(
-        checklist_item_id=checklist_item_id,
-        session_id=session_row.id,
-        customer_name=session_row.customer_name,
-        opportunity_name=session_row.opportunity_name,
-        opportunity_key=opportunity_key,
-        note_text=None,
-        decision_influencers=None,
-        structured_content=None,
-        created_by_user_id=user_id,
-        updated_by_user_id=user_id,
-        is_active=True,
-        version=active.version + 1,
-        previous_version_id=active.id,
+    return await delete_note_version(
+        db, opportunity_key, checklist_item_id, active.id, user_id
     )
-    db.add(row)
+
+
+async def update_note_version(
+    db: AsyncSession,
+    opportunity_key: str,
+    checklist_item_id: int,
+    note_id: int,
+    user_id: int,
+    note_text: Optional[str],
+    influencers_raw: Optional[Sequence[Any]],
+    structured_content: Optional[Dict[str, Any]] = None,
+) -> ChecklistItemNote:
+    await validate_checklist_item_ids(db, [checklist_item_id])
+    res = await db.execute(
+        select(ChecklistItemNote)
+        .where(
+            ChecklistItemNote.id == note_id,
+            ChecklistItemNote.opportunity_key == opportunity_key,
+            ChecklistItemNote.checklist_item_id == checklist_item_id,
+        )
+        .options(selectinload(ChecklistItemNote.updated_by_user))
+    )
+    row = res.scalar_one_or_none()
+    if not row:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Note not found")
+    ensure_note_owner(row, user_id)
+    row.note_text = note_text
+    row.decision_influencers = influencers_to_stored(influencers_raw)
+    row.structured_content = structured_content
+    row.updated_by_user_id = user_id
     await db.flush()
     return await fetch_note_with_editor(db, row.id)
+
+
+async def delete_note_version(
+    db: AsyncSession,
+    opportunity_key: str,
+    checklist_item_id: int,
+    note_id: int,
+    user_id: int,
+) -> Optional[ChecklistItemNote]:
+    await validate_checklist_item_ids(db, [checklist_item_id])
+    res = await db.execute(
+        select(ChecklistItemNote).where(
+            ChecklistItemNote.id == note_id,
+            ChecklistItemNote.opportunity_key == opportunity_key,
+            ChecklistItemNote.checklist_item_id == checklist_item_id,
+        )
+    )
+    row = res.scalar_one_or_none()
+    if not row:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Note not found")
+    ensure_note_owner(row, user_id)
+    deleted_was_active = bool(row.is_active)
+    await db.delete(row)
+    await db.flush()
+    if not deleted_was_active:
+        latest = await get_active_note(db, checklist_item_id, opportunity_key)
+        return latest
+    latest_res = await db.execute(
+        select(ChecklistItemNote)
+        .where(
+            ChecklistItemNote.checklist_item_id == checklist_item_id,
+            ChecklistItemNote.opportunity_key == opportunity_key,
+        )
+        .order_by(ChecklistItemNote.version.desc())
+        .limit(1)
+    )
+    fallback = latest_res.scalar_one_or_none()
+    if fallback:
+        fallback.is_active = True
+        await db.flush()
+        return await fetch_note_with_editor(db, fallback.id)
+    return None
