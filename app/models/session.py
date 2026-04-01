@@ -3,6 +3,7 @@ Session models - Sales call recording and analysis
 """
 from sqlalchemy import Column, Integer, String, Text, Boolean, ForeignKey, Float, DateTime, Enum as SQLEnum
 from sqlalchemy.orm import relationship
+from sqlalchemy.types import TypeDecorator
 import enum
 
 from app.models.base import Base, TimestampMixin
@@ -40,6 +41,42 @@ class DealStage(str, enum.Enum):
     ON_HOLD = "on_hold"  # Deal temporarily on hold
 
 
+class DealStageColumn(TypeDecorator):
+    """
+    Persist deal stage as VARCHAR, not a PostgreSQL ENUM.
+
+    Native PG enums often drift from the app (missing labels, wrong case), which
+    breaks inserts. Values are always stored as DealStage.value (snake_case).
+    """
+
+    impl = String(64)
+    cache_ok = True
+
+    def process_bind_param(self, value, dialect):
+        if value is None:
+            return None
+        if isinstance(value, DealStage):
+            return value.value
+        if isinstance(value, str):
+            v = value.strip()
+            return v.lower() if v else None
+        raise TypeError(f"Unsupported deal_stage type: {type(value)!r}")
+
+    def process_result_value(self, value, dialect):
+        if value is None or value == "":
+            return None
+        if isinstance(value, DealStage):
+            return value
+        s = str(value).strip().lower()
+        try:
+            return DealStage(s)
+        except ValueError:
+            try:
+                return DealStage[s.upper().replace(" ", "_")]
+            except KeyError:
+                return None
+
+
 class Session(Base, TimestampMixin):
     """
     Sales call session - main entity
@@ -53,7 +90,7 @@ class Session(Base, TimestampMixin):
     customer_name = Column(String(255), nullable=False)
     opportunity_name = Column(String(255), nullable=False)
     decision_influencer = Column(String(255), nullable=True)
-    deal_stage = Column(SQLEnum(DealStage), nullable=True)
+    deal_stage = Column(DealStageColumn(), nullable=True)
 
     # Session mode (audio vs manual entry)
     session_mode = Column(SQLEnum(SessionMode), default=SessionMode.AUDIO, nullable=False)

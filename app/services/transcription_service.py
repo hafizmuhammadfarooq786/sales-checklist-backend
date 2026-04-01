@@ -5,8 +5,12 @@ import openai
 from pathlib import Path
 from typing import Optional, Dict, Any, Union, BinaryIO
 import json
+import logging
+from fastapi.concurrency import run_in_threadpool
 
 from app.core.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 class TranscriptionService:
@@ -44,16 +48,17 @@ class TranscriptionService:
                 if not audio_file_path.exists():
                     raise FileNotFoundError(f"Audio file not found: {file_source}")
 
-                print(f"🎙️ Starting transcription for session {session_id}")
-                print(f"📁 File: {audio_file_path.name} ({audio_file_path.stat().st_size} bytes)")
+                logger.info(f"Starting transcription for session {session_id}")
+                logger.info(f"File: {audio_file_path.name} ({audio_file_path.stat().st_size} bytes)")
 
                 # Open and transcribe the audio file
                 with open(audio_file_path, "rb") as audio_file:
-                    transcript = self.client.audio.transcriptions.create(
+                    transcript = await run_in_threadpool(
+                        self.client.audio.transcriptions.create,
                         model=settings.OPENAI_MODEL_WHISPER,
                         file=audio_file,
                         response_format="verbose_json",
-                        language="en"
+                        language="en",
                     )
 
             # Handle BytesIO (streaming from S3)
@@ -64,16 +69,17 @@ class TranscriptionService:
                 file_size = file_source.seek(0, 2)  # Seek to end to get size
                 file_source.seek(0)  # Reset to beginning
 
-                print(f"🎙️ Starting transcription for session {session_id}")
-                print(f"📁 File: {filename} ({file_size} bytes) [streaming from S3]")
+                logger.info(f"Starting transcription for session {session_id}")
+                logger.info(f"File: {filename} ({file_size} bytes) [streaming from S3]")
 
                 # Transcribe directly from BytesIO
                 # OpenAI requires a tuple (filename, file_object) for BytesIO
-                transcript = self.client.audio.transcriptions.create(
+                transcript = await run_in_threadpool(
+                    self.client.audio.transcriptions.create,
                     model=settings.OPENAI_MODEL_WHISPER,
                     file=(filename, file_source),
                     response_format="verbose_json",
-                    language="en"
+                    language="en",
                 )
 
             # Extract results
@@ -85,14 +91,14 @@ class TranscriptionService:
                 "words": getattr(transcript, 'words', []),
             }
 
-            print(f"✅ Transcription completed successfully")
-            print(f"📝 Text length: {len(result['text'])} characters")
-            print(f"⏱️ Duration: {result.get('duration', 'unknown')} seconds")
+            logger.info("Transcription completed successfully")
+            logger.info(f"Text length: {len(result['text'])} characters")
+            logger.info(f"Duration: {result.get('duration', 'unknown')} seconds")
 
             return result
 
         except Exception as e:
-            print(f"❌ Transcription failed for session {session_id}: {str(e)}")
+            logger.error(f"Transcription failed for session {session_id}: {str(e)}")
             raise e
 
     async def analyze_with_gpt4(self, transcript_text: str, session_id: int) -> Dict[str, Any]:
@@ -131,7 +137,8 @@ TRANSCRIPT:
 {transcript_text}
 """
 
-            response = self.client.chat.completions.create(
+            response = await run_in_threadpool(
+                self.client.chat.completions.create,
                 model=settings.OPENAI_MODEL_GPT,
                 messages=[
                     {"role": "system", "content": "You are an expert sales coach and analyst."},
