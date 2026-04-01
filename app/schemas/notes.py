@@ -110,6 +110,8 @@ class NoteItemSingleOut(BaseModel):
 
 
 class NoteHistoryEntryOut(BaseModel):
+    id: int
+    checklist_item_id: int
     version: int
     note_text: Optional[str] = None
     decision_influencers: Optional[List[dict[str, Any]]] = None

@@ -26,7 +26,9 @@ from app.services.notes_service import (
     load_session_for_notes,
     get_latest_for_item,
     note_to_latest_out,
+    delete_note_version,
     soft_delete_item,
+    update_note_version,
     upsert_single,
 )
 
@@ -131,7 +133,7 @@ async def get_note_history(
 
 @router.delete(
     "/sessions/{session_id}/items/{checklist_item_id}",
-    response_model=NoteLatestOut,
+    response_model=NoteItemSingleOut,
 )
 async def soft_clear_note(
     session_id: int,
@@ -143,4 +145,54 @@ async def soft_clear_note(
     row = await soft_delete_item(
         db, session_row, key, checklist_item_id, current_user.id
     )
+    return NoteItemSingleOut(
+        checklist_item_id=checklist_item_id,
+        note=note_to_latest_out(row) if row else None,
+    )
+
+
+@router.put(
+    "/sessions/{session_id}/items/{checklist_item_id}/history/{note_id}",
+    response_model=NoteLatestOut,
+)
+async def edit_history_note(
+    session_id: int,
+    checklist_item_id: int,
+    note_id: int,
+    body: NoteUpsertBody,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    _session_row, key = await _require_session_notes_access(session_id, current_user, db)
+    row = await update_note_version(
+        db,
+        key,
+        checklist_item_id,
+        note_id,
+        current_user.id,
+        body.note_text,
+        body.decision_influencers,
+        body.structured_content,
+    )
     return note_to_latest_out(row)
+
+
+@router.delete(
+    "/sessions/{session_id}/items/{checklist_item_id}/history/{note_id}",
+    response_model=NoteItemSingleOut,
+)
+async def delete_history_note(
+    session_id: int,
+    checklist_item_id: int,
+    note_id: int,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    _session_row, key = await _require_session_notes_access(session_id, current_user, db)
+    row = await delete_note_version(
+        db, key, checklist_item_id, note_id, current_user.id
+    )
+    return NoteItemSingleOut(
+        checklist_item_id=checklist_item_id,
+        note=note_to_latest_out(row) if row else None,
+    )
