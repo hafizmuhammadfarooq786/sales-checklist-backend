@@ -45,6 +45,44 @@ class ChecklistAnalyzer:
         result = await db.execute(query)
         return result.scalars().all()
 
+    async def get_behavioral_frameworks_bulk(
+        self,
+        item_ids: List[int],
+        db: AsyncSession,
+    ) -> Dict[int, Dict[str, List[ChecklistItemBehaviour]]]:
+        """One query for all items; avoids N+1 when building the analysis prompt."""
+        if not item_ids:
+            return {}
+        by_item: Dict[int, Dict[str, List[ChecklistItemBehaviour]]] = {
+            iid: {
+                "behaviors": [],
+                "questions": [],
+                "reminders": [],
+            }
+            for iid in item_ids
+        }
+        query = (
+            select(ChecklistItemBehaviour)
+            .where(ChecklistItemBehaviour.checklist_item_id.in_(item_ids))
+            .where(ChecklistItemBehaviour.isactive == True)
+            .order_by(
+                ChecklistItemBehaviour.checklist_item_id,
+                ChecklistItemBehaviour.order,
+            )
+        )
+        result = await db.execute(query)
+        for row in result.scalars().all():
+            bucket = by_item.get(row.checklist_item_id)
+            if bucket is None:
+                continue
+            if row.rowtype == "Behavior":
+                bucket["behaviors"].append(row)
+            elif row.rowtype == "Question":
+                bucket["questions"].append(row)
+            elif row.rowtype == "Reminder":
+                bucket["reminders"].append(row)
+        return by_item
+
     async def get_behavioral_framework(
         self,
         item_id: int,
@@ -58,23 +96,8 @@ class ChecklistAnalyzer:
         - 'questions': List of question rows (ordered)
         - 'reminders': List of key reminder rows
         """
-        query = (
-            select(ChecklistItemBehaviour)
-            .where(ChecklistItemBehaviour.checklist_item_id == item_id)
-            .where(ChecklistItemBehaviour.isactive == True)
-            .order_by(ChecklistItemBehaviour.order)
-        )
-        result = await db.execute(query)
-        all_rows = result.scalars().all()
-
-        # Group by row type
-        framework = {
-            'behaviors': [r for r in all_rows if r.rowtype == 'Behavior'],
-            'questions': [r for r in all_rows if r.rowtype == 'Question'],
-            'reminders': [r for r in all_rows if r.rowtype == 'Reminder']
-        }
-
-        return framework
+        bulk = await self.get_behavioral_frameworks_bulk([item_id], db)
+        return bulk.get(item_id, {"behaviors": [], "questions": [], "reminders": []})
 
     async def build_analysis_prompt(
         self,
@@ -93,10 +116,13 @@ class ChecklistAnalyzer:
 
         items_description = []
         behavioral_data_map = {}
+        item_ids = [item.id for item in items]
+        frameworks_by_item_id = await self.get_behavioral_frameworks_bulk(item_ids, db)
 
         for idx, item in enumerate(items, start=1):
-            # Fetch behavioral framework for this item (by ID)
-            framework = await self.get_behavioral_framework(item.id, db)
+            framework = frameworks_by_item_id.get(
+                item.id, {"behaviors": [], "questions": [], "reminders": []}
+            )
             behavioral_data_map[item.title] = framework
 
             # Build behavior summary
@@ -501,7 +527,8 @@ CRITICAL REQUIREMENTS:
         session_response_id: int,
         item_id: int,
         question_evaluations: List[Dict],
-        db: AsyncSession
+        db: AsyncSession,
+        framework: Optional[Dict[str, List[ChecklistItemBehaviour]]] = None,
     ):
         """
         Store per-question evaluation results in session_response_analysis table.
@@ -511,9 +538,10 @@ CRITICAL REQUIREMENTS:
             item_id: ID of the checklist item (to find behaviour records)
             question_evaluations: List of question evaluation results from AI
             db: Database session
+            framework: If provided, skips re-fetching behavioural rows for this item.
         """
-        # Fetch behavioral framework to get behaviour_ids for questions
-        framework = await self.get_behavioral_framework(item_id, db)
+        if framework is None:
+            framework = await self.get_behavioral_framework(item_id, db)
         questions = framework['questions']
 
         # Map question numbers to behaviour IDs

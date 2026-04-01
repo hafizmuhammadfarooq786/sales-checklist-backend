@@ -7,6 +7,26 @@ from datetime import datetime
 from app.models.session import SessionStatus, SessionMode, DealStage
 
 
+def _coerce_deal_stage(v):
+    if v is None or v == "":
+        return None
+    if isinstance(v, DealStage):
+        return v
+    if isinstance(v, str):
+        s = v.strip()
+        if not s:
+            return None
+        try:
+            return DealStage(s.lower())
+        except ValueError:
+            key = s.upper().replace(" ", "_")
+            try:
+                return DealStage[key]
+            except KeyError as err:
+                raise ValueError(f"Invalid deal_stage: {v}") from err
+    return v
+
+
 class SessionCreate(BaseModel):
     """Schema for creating a session"""
     customer_name: str = Field(..., min_length=1, max_length=255)
@@ -17,6 +37,12 @@ class SessionCreate(BaseModel):
         default="audio",
         description="Session input mode: 'audio' (record audio) or 'manual' (fill checklist manually)"
     )
+
+    @field_validator("deal_stage", mode="before")
+    @classmethod
+    def normalize_deal_stage(cls, v):
+        """Accept API values as lowercase snake_case or ALL_CAPS member names."""
+        return _coerce_deal_stage(v)
 
     @field_validator("customer_name", "opportunity_name", mode="before")
     @classmethod
@@ -41,6 +67,11 @@ class SessionUpdate(BaseModel):
     decision_influencer: Optional[str] = Field(None, max_length=255)
     deal_stage: Optional[DealStage] = None
     status: Optional[SessionStatus] = None
+
+    @field_validator("deal_stage", mode="before")
+    @classmethod
+    def normalize_deal_stage_update(cls, v):
+        return _coerce_deal_stage(v)
 
 
 class SessionResponse(BaseModel):

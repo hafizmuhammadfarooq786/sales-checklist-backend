@@ -302,6 +302,72 @@ async def list_sessions(
     )
 
 
+@router.get("/analytics/summary")
+async def get_sessions_analytics_summary(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Aggregate analytics payload to avoid frontend N+1 score fetches.
+    """
+    access_filter = get_session_access_filter(current_user)
+
+    rows_result = await db.execute(
+        select(Session, ScoringResult)
+        .outerjoin(ScoringResult, ScoringResult.session_id == Session.id)
+        .where(access_filter)
+        .order_by(Session.created_at.desc())
+    )
+    rows = rows_result.all()
+
+    sessions_payload = []
+    completed_scored = []
+    risk_distribution = {"green": 0, "yellow": 0, "red": 0}
+
+    for session_row, score_row in rows:
+        score_val = None
+        risk_val = None
+        if score_row:
+            score_val = score_row.total_score
+            risk_val = (
+                score_row.risk_band.value
+                if hasattr(score_row.risk_band, "value")
+                else score_row.risk_band
+            )
+            if risk_val in risk_distribution:
+                risk_distribution[risk_val] += 1
+
+        entry = {
+            "id": session_row.id,
+            "customer_name": session_row.customer_name,
+            "opportunity_name": session_row.opportunity_name,
+            "status": session_row.status.value
+            if hasattr(session_row.status, "value")
+            else session_row.status,
+            "created_at": session_row.created_at,
+            "updated_at": session_row.updated_at,
+            "score": score_val,
+            "risk_band": risk_val,
+        }
+        sessions_payload.append(entry)
+        if score_val is not None:
+            completed_scored.append(score_val)
+
+    avg_score = (
+        round(sum(completed_scored) / len(completed_scored))
+        if completed_scored
+        else None
+    )
+
+    return {
+        "total_sessions": len(sessions_payload),
+        "completed_sessions": len(completed_scored),
+        "average_score": avg_score,
+        "risk_distribution": risk_distribution,
+        "sessions": sessions_payload,
+    }
+
+
 @router.get("/{session_id}", response_model=SessionResponse)
 async def get_session(
     session_id: int,

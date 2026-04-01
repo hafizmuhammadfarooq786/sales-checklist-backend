@@ -63,6 +63,9 @@ class Settings(BaseSettings):
     # Celery
     CELERY_BROKER_URL: str = Field(default="redis://localhost:6379/1")
     CELERY_RESULT_BACKEND: str = Field(default="redis://localhost:6379/2")
+    # When True, transcription runs in a Celery worker (requires Redis + worker process).
+    # When False or broker unavailable, upload/transcribe endpoints fall back to BackgroundTasks.
+    USE_CELERY_FOR_TRANSCRIPTION: bool = Field(default=False)
 
     # CORS
     ALLOWED_ORIGINS: List[str] = Field(

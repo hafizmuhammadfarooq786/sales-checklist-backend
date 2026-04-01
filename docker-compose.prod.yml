@@ -11,6 +11,7 @@ services:
       - REDIS_URL=redis://redis:6379/0
       - CELERY_BROKER_URL=redis://redis:6379/1
       - CELERY_RESULT_BACKEND=redis://redis:6379/2
+      - USE_CELERY_FOR_TRANSCRIPTION=true
     depends_on:
       - db
       - redis
@@ -62,6 +63,9 @@ services:
       - REDIS_URL=redis://redis:6379/0
       - CELERY_BROKER_URL=redis://redis:6379/1
       - CELERY_RESULT_BACKEND=redis://redis:6379/2
+      - USE_CELERY_FOR_TRANSCRIPTION=true
+    volumes:
+      - ./uploads:/app/uploads
     depends_on:
       - db
       - redis

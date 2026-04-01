@@ -4,6 +4,14 @@ Database session configuration
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from app.core.config import settings
 
+
+def _async_connect_args(database_url: str) -> dict:
+    """Disable asyncpg prepared-statement cache (stale plans after DDL / migrations)."""
+    if "+asyncpg" in database_url:
+        return {"statement_cache_size": 0}
+    return {}
+
+
 # Create async engine
 engine = create_async_engine(
     settings.DATABASE_URL,
@@ -12,6 +20,7 @@ engine = create_async_engine(
     pool_pre_ping=True,
     pool_size=10,
     max_overflow=20,
+    connect_args=_async_connect_args(settings.DATABASE_URL),
 )
 
 # Create session maker
