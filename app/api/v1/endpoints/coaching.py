@@ -6,7 +6,6 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from sqlalchemy.orm import selectinload
 from datetime import datetime
 from typing import Optional
 
@@ -233,8 +232,6 @@ async def get_coaching_feedback(
     - ADMIN: Can view org sessions
     - SYSTEM_ADMIN: Can view all sessions
     """
-    from app.services.s3_service import get_s3_service
-    from app.core.config import settings
 
     # Verify session access with RBAC
     access_filter = get_session_access_filter(current_user)

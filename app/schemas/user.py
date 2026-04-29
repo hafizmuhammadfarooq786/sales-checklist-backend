@@ -29,6 +29,23 @@ class UserUpdate(BaseModel):
     is_active: Optional[bool] = None
 
 
+class UserSelfUpdate(BaseModel):
+    """Schema for self-service profile updates (safe fields only)"""
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+
+
+class AdminUserProvision(UserBase):
+    """Schema for SYSTEM_ADMIN-provisioned users"""
+    password: str = Field(min_length=8, description="Password must be at least 8 characters")
+    organization_id: int
+    team_id: Optional[int] = None
+    role: UserRole = UserRole.REP
+    is_active: bool = True
+    is_verified: bool = False
+    must_change_password: bool = True
+
+
 class UserResponse(UserBase):
     """Response schema for users"""
     id: int

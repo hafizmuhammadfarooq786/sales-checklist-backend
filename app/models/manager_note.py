@@ -1,7 +1,7 @@
 """
 Manager Notes Model - Coaching feedback from managers on sessions
 """
-from sqlalchemy import Column, Integer, Text, Boolean, ForeignKey, DateTime, String, Enum
+from sqlalchemy import Column, Integer, Text, Boolean, ForeignKey, String, Enum
 from sqlalchemy.orm import relationship
 import enum
 

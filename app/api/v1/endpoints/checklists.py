@@ -31,7 +31,7 @@ async def get_checklist_summary(
     # Get all active categories
     result = await db.execute(
         select(ChecklistCategory)
-        .where(ChecklistCategory.is_active == True)
+        .where(ChecklistCategory.is_active.is_(True))
         .order_by(ChecklistCategory.order)
     )
     categories = result.scalars().all()
@@ -39,7 +39,7 @@ async def get_checklist_summary(
     # Count total items
     items_result = await db.execute(
         select(ChecklistItem)
-        .where(ChecklistItem.is_active == True)
+        .where(ChecklistItem.is_active.is_(True))
     )
     total_items = len(items_result.scalars().all())
 
@@ -59,7 +59,7 @@ async def get_categories(
     """
     result = await db.execute(
         select(ChecklistCategory)
-        .where(ChecklistCategory.is_active == True)
+        .where(ChecklistCategory.is_active.is_(True))
         .order_by(ChecklistCategory.order)
     )
     categories = result.scalars().all()
@@ -79,7 +79,7 @@ async def get_category_with_items(
         select(ChecklistCategory)
         .where(
             ChecklistCategory.id == category_id,
-            ChecklistCategory.is_active == True
+            ChecklistCategory.is_active.is_(True)
         )
         .options(
             selectinload(ChecklistCategory.items).selectinload(ChecklistItem.coaching_questions)
@@ -105,7 +105,7 @@ async def get_all_items(
     Get all checklist items, optionally filtered by category.
     Returns items with coaching questions.
     """
-    query = select(ChecklistItem).where(ChecklistItem.is_active == True)
+    query = select(ChecklistItem).where(ChecklistItem.is_active.is_(True))
 
     if category_id:
         query = query.where(ChecklistItem.category_id == category_id)
@@ -131,7 +131,7 @@ async def get_item(
         select(ChecklistItem)
         .where(
             ChecklistItem.id == item_id,
-            ChecklistItem.is_active == True
+            ChecklistItem.is_active.is_(True)
         )
         .options(selectinload(ChecklistItem.coaching_questions))
     )
@@ -163,7 +163,7 @@ async def get_item_behavioral_framework(
         select(ChecklistItem)
         .where(
             ChecklistItem.id == item_id,
-            ChecklistItem.is_active == True
+            ChecklistItem.is_active.is_(True)
         )
     )
     item = item_result.scalar_one_or_none()
@@ -178,7 +178,7 @@ async def get_item_behavioral_framework(
     framework_result = await db.execute(
         select(ChecklistItemBehaviour)
         .where(ChecklistItemBehaviour.checklist_item_id == item_id)
-        .where(ChecklistItemBehaviour.isactive == True)
+        .where(ChecklistItemBehaviour.isactive.is_(True))
         .order_by(ChecklistItemBehaviour.order)
     )
     framework_rows = framework_result.scalars().all()

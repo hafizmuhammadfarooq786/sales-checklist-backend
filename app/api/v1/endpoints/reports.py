@@ -4,23 +4,23 @@ Generate and download PDF reports for sales sessions
 """
 import logging
 from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from datetime import datetime
 from typing import Optional
-import os
 
 from app.db.session import get_db
 from app.models.session import Session, SessionResponse
-from app.models.scoring import ScoringResult, CoachingFeedback, RiskBand
+from app.models.scoring import ScoringResult
 from app.models.report import Report
 from app.models.checklist import ChecklistItem
 from app.models.user import User
+from app.models.organization_settings import OrganizationSettings
 from app.api.dependencies import get_current_user, get_session_access_filter
-from app.services.report_service import get_report_service
+from app.services.report_service import build_notes_map_for_pdf, get_report_service
 from app.services.email_service import email_service
+from app.services.risk_band_service import get_risk_band
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -180,8 +180,8 @@ async def generate_report(
             detail="No checklist responses found for this session. Cannot generate report."
         )
 
-    # Recalculate score from latest checklist data
-    total_score = 0
+    # Recalculate score from latest checklist data (raw points: 10 per Yes)
+    raw_points_total = 0
     validated_count = 0
     category_scores = {}
     
@@ -206,25 +206,17 @@ async def generate_report(
         item_score = 0
         if final_answer is True:
             item_score = 10
-            total_score += 10
+            raw_points_total += 10
             validated_count += 1
 
         category_scores[category.id]["score"] += item_score
 
     # Calculate percentage score (0-100)
     max_possible_score = len(responses) * 10
-    percentage_score = (total_score / max_possible_score * 100) if max_possible_score > 0 else 0
+    percentage_score = (raw_points_total / max_possible_score * 100) if max_possible_score > 0 else 0
 
-    # Determine risk band based on new thresholds
-    # 70-100: Low Risk (Green)
-    # 40-69: Medium Risk (Yellow)
-    # 0-39: Critical Risk (Red)
-    if percentage_score >= 70:
-        risk_band = RiskBand.GREEN
-    elif percentage_score >= 40:
-        risk_band = RiskBand.YELLOW
-    else:
-        risk_band = RiskBand.RED
+    # Determine risk band from centralized thresholds.
+    risk_band = get_risk_band(percentage_score)
 
     # Get or create scoring result and update with recalculated values
     scoring_result = await db.execute(
@@ -259,11 +251,21 @@ async def generate_report(
     await db.commit()
     await db.refresh(scoring)
 
-    # Get coaching feedback (optional)
-    coaching_result = await db.execute(
-        select(CoachingFeedback).where(CoachingFeedback.session_id == session_id)
-    )
-    coaching = coaching_result.scalar_one_or_none()
+    # Organization logo (optional) for PDF header
+    org_logo_url: Optional[str] = None
+    owner_result = await db.execute(select(User).where(User.id == session.user_id))
+    session_owner = owner_result.scalar_one_or_none()
+    if session_owner and session_owner.organization_id:
+        settings_result = await db.execute(
+            select(OrganizationSettings).where(
+                OrganizationSettings.organization_id == session_owner.organization_id
+            )
+        )
+        org_settings = settings_result.scalar_one_or_none()
+        if org_settings and org_settings.logo_url:
+            org_logo_url = org_settings.logo_url.strip() or None
+
+    notes_by_item_id = await build_notes_map_for_pdf(db, session)
 
     # Always include all checklist details in the report
     # Use the responses we already loaded for score calculation
@@ -315,7 +317,8 @@ async def generate_report(
             "customer_name": session.customer_name,
             "opportunity_name": session.opportunity_name,
             "deal_stage": session.deal_stage,
-            "created_at": session.created_at
+            "created_at": session.created_at,
+            "review_generated_at": datetime.utcnow(),
         }
 
         scoring_data = {
@@ -325,27 +328,22 @@ async def generate_report(
             "top_strengths": scoring.top_strengths,
             "top_gaps": scoring.top_gaps,
             "items_validated": scoring.items_validated,
-            "items_total": scoring.items_total
+            "items_total": scoring.items_total,
+            "raw_points_total": raw_points_total,
+            "max_raw_points": max_possible_score,
         }
 
-        coaching_data = None
-        if coaching:
-            coaching_data = {
-                "feedback_text": coaching.feedback_text,
-                "strengths": coaching.strengths,
-                "improvement_areas": coaching.improvement_areas,
-                "action_items": coaching.action_items
-            }
-
-        # Generate PDF
+        # Generate PDF (checklist + notes; no coaching in export)
         report_service = get_report_service()
         pdf_result = await report_service.generate_session_report(
             session_id=session_id,
             user_id=current_user.id,
             session_data=session_data,
             scoring_data=scoring_data,
-            coaching_data=coaching_data,
-            responses_data=responses_data
+            coaching_data=None,
+            responses_data=responses_data,
+            organization_logo_url=org_logo_url,
+            notes_by_item_id=notes_by_item_id,
         )
 
         # Save or update report record
@@ -459,7 +457,7 @@ async def get_report(
         logger.info(f"Report not found for session {session_id}, generating on-demand...")
         try:
             # Call generate_report internally
-            result = await generate_report(
+            await generate_report(
                 session_id=session_id,
                 include_checklist_details=True,
                 current_user=current_user,

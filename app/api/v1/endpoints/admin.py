@@ -2,12 +2,12 @@
 Admin API Endpoints - SYSTEM_ADMIN only
 Handles organization and user management across all organizations
 """
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+import secrets
+from fastapi import APIRouter, Depends, HTTPException, status, Query, Header
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, or_
 from sqlalchemy.orm import selectinload
 from typing import List, Optional
-from datetime import datetime
 
 from app.db.session import get_db
 from app.models import Organization, User, Team, OrganizationSettings
@@ -17,10 +17,27 @@ from app.schemas.organization import (
     OrganizationUpdate,
     OrganizationResponse,
 )
-from app.schemas.user import UserResponse, UserUpdate
+from app.schemas.user import UserResponse, UserUpdate, AdminUserProvision
 from app.api.dependencies import require_roles
+from app.services.auth_service import auth_service
+from app.core.config import settings
 
 router = APIRouter()
+
+
+def _require_internal_admin_api_key(x_internal_api_key: str = Header(..., alias="X-Internal-Api-Key")) -> None:
+    """Require a shared key for direct SYSTEM_ADMIN provisioning APIs."""
+    if not settings.INTERNAL_ADMIN_API_KEY:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Internal admin API key is not configured"
+        )
+
+    if not secrets.compare_digest(x_internal_api_key, settings.INTERNAL_ADMIN_API_KEY):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Invalid internal admin API key"
+        )
 
 
 # ==================== ORGANIZATIONS ====================
@@ -323,6 +340,66 @@ async def update_user(
     return UserResponse.model_validate(user)
 
 
+@router.post("/users/provision", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+async def provision_user(
+    user_data: AdminUserProvision,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.SYSTEM_ADMIN)),
+    _: None = Depends(_require_internal_admin_api_key),
+):
+    """
+    Provision a user directly via SYSTEM_ADMIN API key-gated endpoint.
+    """
+    org_result = await db.execute(
+        select(Organization).where(Organization.id == user_data.organization_id)
+    )
+    organization = org_result.scalar_one_or_none()
+    if not organization:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Organization with ID {user_data.organization_id} not found"
+        )
+
+    if user_data.team_id is not None:
+        team_result = await db.execute(
+            select(Team).where(
+                Team.id == user_data.team_id,
+                Team.organization_id == user_data.organization_id
+            )
+        )
+        if not team_result.scalar_one_or_none():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Team does not belong to the provided organization"
+            )
+
+    existing_user_result = await db.execute(
+        select(User).where(User.email == user_data.email)
+    )
+    if existing_user_result.scalar_one_or_none():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Email already registered"
+        )
+
+    user = User(
+        email=user_data.email,
+        password_hash=auth_service.hash_password(user_data.password),
+        first_name=user_data.first_name,
+        last_name=user_data.last_name,
+        role=user_data.role,
+        organization_id=user_data.organization_id,
+        team_id=user_data.team_id,
+        is_active=user_data.is_active,
+        is_verified=user_data.is_verified,
+        must_change_password=user_data.must_change_password,
+    )
+    db.add(user)
+    await db.commit()
+    await db.refresh(user)
+    return UserResponse.model_validate(user)
+
+
 @router.delete("/users/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_user(
     user_id: int,
@@ -330,24 +407,19 @@ async def delete_user(
     current_user: User = Depends(require_roles(UserRole.SYSTEM_ADMIN))
 ):
     """
-    Soft delete a user (SYSTEM_ADMIN only).
+    Hard delete a user (SYSTEM_ADMIN only).
 
-    This marks the user as deleted without removing their data from the database.
-    All sessions, score history, and associated data are preserved.
-    The user will be blocked from logging in and hidden from user lists.
+    This permanently removes the user record.
     """
     result = await db.execute(
-        select(User).where(
-            User.id == user_id,
-            User.deleted_at.is_(None)  # Only get non-deleted users
-        )
+        select(User).where(User.id == user_id)
     )
     user = result.scalar_one_or_none()
 
     if not user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"User with ID {user_id} not found or already deleted"
+            detail=f"User with ID {user_id} not found"
         )
 
     # Prevent deleting yourself
@@ -357,11 +429,8 @@ async def delete_user(
             detail="Cannot delete your own user account"
         )
 
-    # Soft delete: mark as deleted instead of removing from database
-    user.deleted_at = datetime.utcnow()
-    user.deleted_by = current_user.id
-    user.is_active = False  # Also mark as inactive
-
+    # Hard delete: permanently remove user row.
+    await db.delete(user)
     await db.commit()
 
 
@@ -426,7 +495,7 @@ async def get_system_stats(
     total_orgs = org_count_result.scalar() or 0
 
     active_org_count_result = await db.execute(
-        select(func.count(Organization.id)).where(Organization.is_active == True)
+        select(func.count(Organization.id)).where(Organization.is_active.is_(True))
     )
     active_orgs = active_org_count_result.scalar() or 0
 
@@ -435,7 +504,7 @@ async def get_system_stats(
     total_users = user_count_result.scalar() or 0
 
     active_user_count_result = await db.execute(
-        select(func.count(User.id)).where(User.is_active == True)
+        select(func.count(User.id)).where(User.is_active.is_(True))
     )
     active_users = active_user_count_result.scalar() or 0
 

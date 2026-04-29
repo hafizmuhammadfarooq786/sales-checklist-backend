@@ -18,12 +18,24 @@ from app.schemas.session import (
     SessionListResponse,
     ManualChecklistSubmit,
 )
+from app.schemas.checklist import (
+    ChecklistReviewResponse,
+    SessionResponseReview,
+    ChecklistItemInfo,
+    CoachingQuestionInfo,
+    ChecklistItemUpdate,
+    ChecklistItemUpdateResponse,
+    ChecklistSubmitResponse,
+)
 from app.api.dependencies import (
     get_current_user_id,
     get_current_user,
     get_session_access_filter,
     check_session_access,
 )
+from app.services.risk_band_service import get_risk_band
+from app.models.checklist import ChecklistItem
+from app.models.session import SessionResponse as SessionResponseModel
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -109,6 +121,9 @@ async def generate_coaching_in_background(session_id: int, total_score: float, r
 
             # === Generate Report ===
             try:
+                from app.models.organization_settings import OrganizationSettings
+                from app.services.report_service import build_notes_map_for_pdf
+
                 report_service = get_report_service()
                 # Build report payload for the current ReportService API.
                 category_scores = {}
@@ -155,6 +170,7 @@ async def generate_coaching_in_background(session_id: int, total_score: float, r
                         }
                     )
 
+                raw_points_total = int(total_score) if isinstance(total_score, (int, float)) else 0
                 scoring_data = {
                     "total_score": total_score,
                     "risk_band": risk_band.value if hasattr(risk_band, "value") else risk_band,
@@ -163,13 +179,34 @@ async def generate_coaching_in_background(session_id: int, total_score: float, r
                     "top_gaps": [],
                     "items_validated": validated_count,
                     "items_total": len(responses),
+                    "raw_points_total": raw_points_total,
+                    "max_raw_points": len(responses) * 10,
                 }
+
+                org_logo_url = None
+                owner_result = await db.execute(
+                    select(User).where(User.id == session.user_id)
+                )
+                session_owner = owner_result.scalar_one_or_none()
+                if session_owner and session_owner.organization_id:
+                    settings_result = await db.execute(
+                        select(OrganizationSettings).where(
+                            OrganizationSettings.organization_id
+                            == session_owner.organization_id
+                        )
+                    )
+                    org_settings = settings_result.scalar_one_or_none()
+                    if org_settings and org_settings.logo_url:
+                        org_logo_url = org_settings.logo_url.strip() or None
+
+                notes_by_item_id = await build_notes_map_for_pdf(db, session)
 
                 session_data = {
                     "customer_name": session.customer_name,
                     "opportunity_name": session.opportunity_name,
                     "deal_stage": session.deal_stage,
                     "created_at": session.created_at,
+                    "review_generated_at": datetime.utcnow(),
                 }
 
                 pdf_result = await report_service.generate_session_report(
@@ -179,6 +216,8 @@ async def generate_coaching_in_background(session_id: int, total_score: float, r
                     scoring_data=scoring_data,
                     coaching_data=None,
                     responses_data=responses_data,
+                    organization_logo_url=org_logo_url,
+                    notes_by_item_id=notes_by_item_id,
                 )
 
                 # Upsert reports table row so report endpoints can resolve it.
@@ -480,19 +519,6 @@ async def delete_session(
 # NEW CHECKLIST REVIEW ENDPOINTS (10-item AI auto-fill system)
 # ============================================================================
 
-from app.schemas.checklist import (
-    ChecklistReviewResponse,
-    SessionResponseReview,
-    ChecklistItemInfo,
-    CoachingQuestionInfo,
-    ChecklistItemUpdate,
-    ChecklistItemUpdateResponse,
-    ChecklistSubmitResponse,
-)
-from app.models.checklist import ChecklistItem, ChecklistCategory, CoachingQuestion
-from app.models.session import SessionResponse as SessionResponseModel
-from datetime import datetime
-
 
 @router.get("/{session_id}/checklist", response_model=ChecklistReviewResponse)
 async def get_checklist_for_review(
@@ -752,7 +778,7 @@ async def submit_manual_checklist(
     response_records = []
     for item in checklist_data.responses:
         # Format notes for ai_reasoning field
-        reasoning = f"Manual entry by user"
+        reasoning = "Manual entry by user"
         if item.notes:
             reasoning += f". Notes: {item.notes}"
 
@@ -775,16 +801,8 @@ async def submit_manual_checklist(
     # Calculate total score
     total_score = sum(r.score for r in response_records)
 
-    # Determine risk band based on new thresholds
-    # 70-100: Low Risk (Green)
-    # 40-69: Medium Risk (Yellow)
-    # 0-39: Critical Risk (Red)
-    if total_score >= 70:
-        risk_band = RiskBand.GREEN
-    elif total_score >= 40:
-        risk_band = RiskBand.YELLOW
-    else:
-        risk_band = RiskBand.RED
+    # Determine risk band from centralized thresholds.
+    risk_band = get_risk_band(total_score)
 
     # Create ScoringResult
     scoring_result = ScoringResult(
@@ -920,16 +938,8 @@ async def submit_checklist(
         else:
             items_no += 1
 
-    # Determine risk band based on score (new thresholds)
-    # 70-100: Low Risk (Green)
-    # 40-69: Medium Risk (Yellow)
-    # 0-39: Critical Risk (Red)
-    if total_score >= 70:
-        risk_band = RiskBand.GREEN
-    elif total_score >= 40:
-        risk_band = RiskBand.YELLOW
-    else:
-        risk_band = RiskBand.RED
+    # Determine risk band from centralized thresholds.
+    risk_band = get_risk_band(total_score)
 
     # Create or update ScoringResult
     scoring_result_query = await db.execute(
@@ -1168,13 +1178,8 @@ async def resubmit_checklist(
             total_score += 10
             items_validated += 1
 
-    # Determine risk band
-    if total_score >= 70:
-        risk_band = RiskBand.GREEN
-    elif total_score >= 40:
-        risk_band = RiskBand.YELLOW
-    else:
-        risk_band = RiskBand.RED
+    # Determine risk band from centralized thresholds.
+    risk_band = get_risk_band(total_score)
 
     # Get previous version to calculate changes
     from app.models.scoring import ScoreHistory

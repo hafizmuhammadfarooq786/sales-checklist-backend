@@ -9,7 +9,7 @@ from sqlalchemy.orm import selectinload
 from typing import List, Optional
 
 from app.db.session import get_db
-from app.models import Organization, User, Team, Invitation, OrganizationSettings
+from app.models import Organization, User, Team, OrganizationSettings
 from app.models.user import UserRole
 from app.schemas.organization import (
     OrganizationResponse,
@@ -26,7 +26,7 @@ from app.schemas.invitation import (
     InvitationAccept,
 )
 from app.schemas.user import UserResponse
-from app.api.dependencies import require_roles, get_current_user
+from app.api.dependencies import require_roles, get_current_invitation_user
 from app.services.invitation_service import get_invitation_service
 from app.core.config import settings
 
@@ -325,7 +325,8 @@ async def list_organization_users(
         selectinload(User.team)
     ).where(
         User.organization_id == current_user.organization_id,
-        User.deleted_at.is_(None)  # Exclude soft-deleted users
+        User.deleted_at.is_(None),  # Exclude soft-deleted users
+        User.is_verified.is_(True)  # Only show accepted (verified) members
     )
 
     # Apply RBAC - MANAGER can only see their team
@@ -486,6 +487,11 @@ async def cancel_invitation(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=str(e)
         )
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        )
 
 
 # ==================== PUBLIC INVITATION ENDPOINTS ====================
@@ -515,7 +521,7 @@ async def verify_invitation_token(
 async def accept_invitation(
     accept_data: InvitationAccept,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_invitation_user)
 ):
     """
     Accept an invitation and join the organization (AUTHENTICATED).
@@ -523,7 +529,7 @@ async def accept_invitation(
     User must be logged in and email must match the invitation.
     """
     try:
-        success = await invitation_service.accept_invitation(
+        await invitation_service.accept_invitation(
             db=db,
             token=accept_data.token,
             user_id=current_user.id

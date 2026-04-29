@@ -4,23 +4,17 @@ Generates personalized coaching feedback using hardcoded guidance text
 Now uses gap-based coaching: focuses only on items scoring 0/10
 Audio generation is disabled (code commented out but preserved)
 """
-import json
-import tempfile
-import os
 from datetime import datetime
 from typing import Dict, Any, Optional, List
 import openai
 from elevenlabs import ElevenLabs
-from elevenlabs.core import ApiError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from app.core.config import settings
-from app.services.s3_service import get_s3_service
 from app.models.session import SessionResponse
-from app.models.checklist import ChecklistItem
-from app.models.checklist_behaviour import ChecklistItemBehaviour, SessionResponseAnalysis
+from app.models.checklist_behaviour import ChecklistItemBehaviour
 
 
 # Hardcoded coaching feedback for each checklist item (client-provided)
@@ -96,7 +90,7 @@ class CoachingService:
             framework_result = await db.execute(
                 select(ChecklistItemBehaviour)
                 .where(ChecklistItemBehaviour.checklist_item_id == item.id)
-                .where(ChecklistItemBehaviour.isactive == True)
+                .where(ChecklistItemBehaviour.isactive.is_(True))
                 .where(ChecklistItemBehaviour.rowtype == 'Question')
                 .order_by(ChecklistItemBehaviour.order)
                 .limit(1)

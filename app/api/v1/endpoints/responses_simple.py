@@ -3,7 +3,7 @@ Session Response API endpoints
 """
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, delete
+from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from pydantic import BaseModel
 
@@ -174,7 +174,7 @@ async def initialize_session_responses(
 
     # Get all active checklist items
     items_result = await db.execute(
-        select(ChecklistItem).where(ChecklistItem.is_active == True)
+        select(ChecklistItem).where(ChecklistItem.is_active.is_(True))
     )
     items = items_result.scalars().all()
 
