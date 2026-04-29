@@ -6,12 +6,11 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
-from typing import Dict, List
 from datetime import datetime
 
 from app.db.session import get_db
 from app.models.session import Session, SessionResponse, SessionStatus
-from app.models.checklist import ChecklistItem, ChecklistCategory
+from app.models.checklist import ChecklistItem
 from app.models.scoring import ScoringResult, ScoreHistory
 from app.models.user import User
 from app.api.dependencies import get_current_user, get_session_access_filter

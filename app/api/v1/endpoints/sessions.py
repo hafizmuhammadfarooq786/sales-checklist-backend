@@ -18,6 +18,15 @@ from app.schemas.session import (
     SessionListResponse,
     ManualChecklistSubmit,
 )
+from app.schemas.checklist import (
+    ChecklistReviewResponse,
+    SessionResponseReview,
+    ChecklistItemInfo,
+    CoachingQuestionInfo,
+    ChecklistItemUpdate,
+    ChecklistItemUpdateResponse,
+    ChecklistSubmitResponse,
+)
 from app.api.dependencies import (
     get_current_user_id,
     get_current_user,
@@ -25,6 +34,8 @@ from app.api.dependencies import (
     check_session_access,
 )
 from app.services.risk_band_service import get_risk_band
+from app.models.checklist import ChecklistItem
+from app.models.session import SessionResponse as SessionResponseModel
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -508,19 +519,6 @@ async def delete_session(
 # NEW CHECKLIST REVIEW ENDPOINTS (10-item AI auto-fill system)
 # ============================================================================
 
-from app.schemas.checklist import (
-    ChecklistReviewResponse,
-    SessionResponseReview,
-    ChecklistItemInfo,
-    CoachingQuestionInfo,
-    ChecklistItemUpdate,
-    ChecklistItemUpdateResponse,
-    ChecklistSubmitResponse,
-)
-from app.models.checklist import ChecklistItem, ChecklistCategory, CoachingQuestion
-from app.models.session import SessionResponse as SessionResponseModel
-from datetime import datetime
-
 
 @router.get("/{session_id}/checklist", response_model=ChecklistReviewResponse)
 async def get_checklist_for_review(
@@ -780,7 +778,7 @@ async def submit_manual_checklist(
     response_records = []
     for item in checklist_data.responses:
         # Format notes for ai_reasoning field
-        reasoning = f"Manual entry by user"
+        reasoning = "Manual entry by user"
         if item.notes:
             reasoning += f". Notes: {item.notes}"
 

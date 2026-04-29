@@ -31,126 +31,127 @@ class TemplateLoader(BaseLoader):
                 <style>
                     @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap');
 
-                    * { box-sizing: border-box; margin: 0; padding: 0; }
+                    * { box-sizing: border-box; margin: 0; padding: 0; }    
 
                     body {
-                    font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif;
-                    background-color: #F0EDE8;
-                    color: #1A1A1A;
-                    -webkit-font-smoothing: antialiased;
-                    padding: 40px 16px;
-                    line-height: 1.6;
+                        font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif !important;
+                        background-color: #F0EDE8 !important;
+                        color: #1A1A1A !important;
+                        -webkit-font-smoothing: antialiased !important;
+                        padding: 40px 16px !important;
+                        line-height: 1.6 !important;
                     }
 
-                    .email-wrapper { max-width: 560px; margin: 0 auto; }
+                    .email-wrapper { max-width: 560px; margin: 0 auto !important; }
 
                     /* ─── Pre-header ─── */
                     .pre-header {
-                    display: flex;
-                    align-items: center;
-                    justify-content: space-between;
-                    padding: 0 4px 24px;
+                        display: flex;
+                        align-items: center;
+                        justify-content: space-between;
+                        padding: 0 4px 24px;
                     }
 
                     .wordmark {
-                    font-size: 13px;
-                    font-weight: 600;
-                    letter-spacing: 0.1em;
-                    text-transform: uppercase;
-                    color: #555;
+                        font-size: 13px !important;
+                        font-weight: 600 !important;
+                        letter-spacing: 0.1em !important;
+                        text-transform: uppercase !important;
+                        color: #555 !important;
                     }
 
                     .badge {
-                    font-size: 11px;
-                    font-weight: 500;
-                    letter-spacing: 0.08em;
-                    text-transform: uppercase;
-                    color: #1A5C8A;
-                    background: #D5E9F5;
-                    border: 1px solid #A8CDE4;
-                    border-radius: 100px;
-                    padding: 4px 12px;
+                        font-size: 11px;
+                        font-weight: 500;
+                        letter-spacing: 0.08em;
+                        text-transform: uppercase;
+                        color: #1A5C8A;
+                        background: #D5E9F5;
+                        border: 1px solid #A8CDE4;
+                        border-radius: 100px;
+                        padding: 4px 12px;
+                        margin-left: 12px !important;
                     }
 
                     /* ─── Header ─── */
                     .header {
-                    background-color: #141414;
-                    border-radius: 16px 16px 0 0;
-                    padding: 48px 40px 40px;
-                    position: relative;
-                    overflow: hidden;
+                        background-color: #141414;
+                        border-radius: 16px 16px 0 0;
+                        padding: 48px 40px 40px;
+                        position: relative;
+                        overflow: hidden;
                     }
 
                     .header::before {
-                    content: '';
-                    position: absolute;
-                    top: -60px; right: -60px;
-                    width: 220px; height: 220px;
-                    border-radius: 50%;
-                    border: 1px solid rgba(255,255,255,0.05);
+                        content: '';
+                        position: absolute;
+                        top: -60px; right: -60px;
+                        width: 220px; height: 220px;
+                        border-radius: 50%;
+                        border: 1px solid rgba(255,255,255,0.05);
                     }
 
                     .header::after {
-                    content: '';
-                    position: absolute;
-                    top: -100px; right: -100px;
-                    width: 320px; height: 320px;
-                    border-radius: 50%;
-                    border: 1px solid rgba(255,255,255,0.04);
+                        content: '';
+                        position: absolute;
+                        top: -100px; right: -100px;
+                        width: 320px; height: 320px;
+                        border-radius: 50%;
+                        border: 1px solid rgba(255,255,255,0.04);
                     }
 
-                    .header-eyebrow {
-                    font-size: 11px;
-                    font-weight: 500;
-                    letter-spacing: 0.12em;
-                    text-transform: uppercase;
-                    color: #4A9CC4;
-                    margin-bottom: 16px;
-                    }
+                        .header-eyebrow {
+                        font-size: 11px;
+                        font-weight: 500;
+                        letter-spacing: 0.12em;
+                        text-transform: uppercase;
+                        color: #4A9CC4;
+                        margin-bottom: 16px;
+                        }
 
-                    .header h1 {
-                    font-size: 30px;
-                    font-weight: 600;
-                    color: #FFFFFF;
-                    line-height: 1.25;
-                    margin-bottom: 12px;
-                    letter-spacing: -0.3px;
-                    }
+                        .header h1 {
+                        font-size: 30px;
+                        font-weight: 600;
+                        color: #FFFFFF;
+                        line-height: 1.25;
+                        margin-bottom: 12px;
+                        letter-spacing: -0.3px;
+                        }
 
-                    .header h1 span { color: #E0A84F; }
+                        .header h1 span { color: #E0A84F; }
 
                     .header-sub {
-                    font-size: 15px;
-                    color: rgba(255,255,255,0.6);
-                    font-weight: 400;
-                    }
+                        font-size: 15px;
+                        color: #FFFFFF !important;
+                        font-weight: 400;
+                        }
 
-                    /* ─── Content ─── */
-                    .content {
-                    background: #FFFFFF;
-                    border-radius: 0 0 16px 16px;
-                    padding: 40px;
-                    border: 1px solid #E8E2DA;
-                    border-top: none;
-                    }
+                        /* ─── Content ─── */
+                        .content {
+                        background: #FFFFFF;
+                        border-radius: 0 0 16px 16px;
+                        padding: 40px;
+                        border: 1px solid #E8E2DA;
+                        border-top: none;
+                        }
 
-                    .intro-text {
-                    font-size: 16px;
-                    color: #444;
-                    line-height: 1.7;
-                    margin-bottom: 28px;
-                    }
+                        .intro-text {
+                        font-size: 16px;
+                        color: #444;
+                        line-height: 1.7;
+                        margin-bottom: 28px;
+                        }
 
-                    .intro-text strong { color: #1A1A1A; font-weight: 600; }
+                        .intro-text strong { color: #1A1A1A; font-weight: 600; }
 
-                    /* ─── Steps ─── */
-                    .steps-label {
-                    font-size: 11px;
-                    font-weight: 600;
-                    letter-spacing: 0.08em;
-                    text-transform: uppercase;
-                    color: #999;
-                    margin-bottom: 16px;
+                        /* ─── Steps ─── */
+                        .steps-label {
+                        font-size: 11px;
+                        font-weight: 600;
+                        letter-spacing: 0.08em;
+                        text-transform: uppercase;
+                        color: #999;
+                        margin-bottom: 16px;
                     }
 
                     .steps-list { list-style: none; margin-bottom: 28px; }
@@ -164,6 +165,7 @@ class TemplateLoader(BaseLoader):
                     font-size: 14px;
                     color: #444;
                     }
+
 
                     .step-item:last-child { border-bottom: none; }
 
@@ -186,15 +188,15 @@ class TemplateLoader(BaseLoader):
                     .cta-section { text-align: center; margin: 32px 0; }
 
                     .cta-button {
-                    display: inline-block;
-                    background: #1A1A1A;
-                    color: #FFFFFF;
-                    text-decoration: none;
-                    font-size: 14px;
-                    font-weight: 600;
-                    letter-spacing: 0.02em;
-                    padding: 14px 36px;
-                    border-radius: 8px;
+                        display: inline-block;
+                        background: #1A1A1A !important;
+                        color: #FFFFFF !important;
+                        text-decoration: none !important;
+                        font-size: 14px;
+                        font-weight: 600;
+                        letter-spacing: 0.02em;
+                        padding: 14px 36px !important;
+                        border-radius: 8px !important;
                     }
 
                     .cta-sub { margin-top: 10px; font-size: 12px; color: #999; }
@@ -202,40 +204,14 @@ class TemplateLoader(BaseLoader):
                     /* ─── Divider ─── */
                     .divider { height: 1px; background: #F0EDE8; margin: 28px 0; }
 
-                    /* ─── Fallback URL ─── */
-                    .fallback-url {
-                    background: #F6F4F0;
-                    border-radius: 8px;
-                    padding: 14px 16px;
-                    margin-bottom: 28px;
-                    }
-
-                    .fallback-label {
-                    font-size: 11px;
-                    font-weight: 600;
-                    letter-spacing: 0.08em;
-                    text-transform: uppercase;
-                    color: #AAA;
-                    margin-bottom: 6px;
-                    }
-
-                    .fallback-link {
-                    font-family: 'DM Mono', 'Courier New', monospace;
-                    font-size: 11px;
-                    color: #555;
-                    word-break: break-all;
-                    line-height: 1.6;
-                    }
-
-                    /* ─── Expiry notice ─── */
                     .notice {
-                    display: flex;
-                    gap: 12px;
-                    background: #FFFBF4;
-                    border: 1px solid #F0D99A;
-                    border-radius: 8px;
-                    padding: 14px 16px;
-                    margin-bottom: 28px;
+                        display: flex;
+                        gap: 12px;
+                        background: #FFFBF4;
+                        border: 1px solid #F0D99A;
+                        border-radius: 8px !important;
+                        padding: 14px 16px;
+                        margin-bottom: 28px;
                     }
 
                     .notice-text { font-size: 13px; color: #7A5C1A; line-height: 1.5; }
@@ -280,9 +256,8 @@ class TemplateLoader(BaseLoader):
 
                     <!-- Header -->
                     <div class="header">
-                    <div class="header-eyebrow">One more step</div>
                     <h1>Confirm your <span>email</span></h1>
-                    <p class="header-sub">You're almost ready — just verify your address to get started.</p>
+                        <p class="header-sub">Please verify your email address to get started.</p>
                     </div>
 
                     <!-- Body -->
@@ -294,36 +269,11 @@ class TemplateLoader(BaseLoader):
                         and access all features.
                     </p>
 
-                    <!-- Steps -->
-                    <div class="steps-label">How it works</div>
-                    <ul class="steps-list">
-                        <li class="step-item">
-                        <span class="step-num">1</span>
-                        Click "Verify Email Address" below
-                        </li>
-                        <li class="step-item">
-                        <span class="step-num">2</span>
-                        You'll be redirected to confirm your account
-                        </li>
-                        <li class="step-item">
-                        <span class="step-num">3</span>
-                        Start using {{ project_name }} immediately
-                        </li>
-                    </ul>
-
                     <!-- CTA -->
                     <div class="cta-section">
                         <a href="{{ verification_url }}" class="cta-button">Verify Email Address &rarr;</a>
-                        <p class="cta-sub">Expires in 24 hours</p>
                     </div>
 
-                    <div class="divider"></div>
-
-                    <!-- Fallback URL -->
-                    <div class="fallback-url">
-                        <div class="fallback-label">Or open this link in your browser</div>
-                        <div class="fallback-link">{{ verification_url }}</div>
-                    </div>
 
                     <!-- Notice -->
                     <div class="notice">
@@ -803,19 +753,11 @@ class TemplateLoader(BaseLoader):
                     margin-bottom: 32px;
                     }
 
-                    .active-dot {
-                    width: 10px;
-                    height: 10px;
-                    border-radius: 50%;
-                    background: #3AB55A;
-                    flex-shrink: 0;
-                    box-shadow: 0 0 0 3px rgba(58,181,90,0.2);
-                    }
-
                     .active-text {
-                    font-size: 14px;
-                    font-weight: 500;
-                    color: #1E6B34;
+                        font-size: 14px;
+                        font-weight: 500;
+                        color: #1E6B34;
+                        text-align: center;
                     }
 
                     /* ─── Features ─── */
@@ -937,7 +879,7 @@ class TemplateLoader(BaseLoader):
                     <!-- Pre-header -->
                     <div class="pre-header">
                     <span class="wordmark">{{ project_name }}</span>
-                    <span class="badge">Welcome</span>
+                    <span class="badge" style="margin-left: 10px;">Welcome</span>
                     </div>
 
                     <!-- Header -->
@@ -951,13 +893,12 @@ class TemplateLoader(BaseLoader):
                     <div class="content">
 
                     <p class="intro-text">
-                        Hello <strong>{{ user_name }}</strong> — your email has been verified and your
+                        Hello <strong>{{ user_name }}</strong>, your email has been verified and your
                         account is fully active. Here's everything you can do from day one.
                     </p>
 
                     <!-- Active status -->
                     <div class="active-banner">
-                        <div class="active-dot"></div>
                         <div class="active-text">Account verified &amp; active</div>
                     </div>
 
@@ -965,39 +906,24 @@ class TemplateLoader(BaseLoader):
                     <div class="features-label">What you have access to</div>
                     <div class="features-grid">
                         <div class="feature-cell">
-                        <div class="feature-num">01</div>
-                        <div class="feature-title">Sales Session Analysis</div>
-                        <div class="feature-desc">Upload calls and get AI-powered insights instantly</div>
+                            <div class="feature-title">Sales Session Analysis</div>
                         </div>
                         <div class="feature-cell">
-                        <div class="feature-num">02</div>
-                        <div class="feature-title">Checklist Scoring</div>
-                        <div class="feature-desc">Scores and feedback grounded in sales best practices</div>
+                            <div class="feature-title">Checklist Scoring</div>
                         </div>
                         <div class="feature-cell">
-                        <div class="feature-num">03</div>
-                        <div class="feature-title">Performance Tracking</div>
-                        <div class="feature-desc">Monitor progress and surface improvement areas over time</div>
+                            <div class="feature-title">Performance Tracking</div>
                         </div>
                         <div class="feature-cell">
-                        <div class="feature-num">04</div>
-                        <div class="feature-title">Detailed Reports</div>
-                        <div class="feature-desc">Generate comprehensive reports across all your sessions</div>
+                            <div class="feature-title">Detailed Reports</div>
                         </div>
                     </div>
 
                     <!-- CTA -->
                     <div class="cta-section">
                         <a href="{{ dashboard_url }}" class="cta-button">Go to Dashboard &rarr;</a>
-                        <p class="cta-sub">Your workspace is ready</p>
                     </div>
 
-                    <div class="divider"></div>
-
-                    <!-- Support -->
-                    <div class="support-note">
-                        Questions or need a hand getting started? Reach out to our support team — we're happy to help.
-                    </div>
 
                     <p class="body-text">
                         Best regards,<br />The {{ project_name }} Team
@@ -1034,16 +960,16 @@ class TemplateLoader(BaseLoader):
 
                     body {
                         font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif;
-                        background-color: #F0EDE8;
-                        color: #1A1A1A;
+                        background-color: #F0EDE8 !important;
+                        color: #1A1A1A !important;
                         -webkit-font-smoothing: antialiased;
-                        padding: 40px 16px;
-                        line-height: 1.6;
+                        padding: 40px 16px !important;
+                        line-height: 1.6 !important;
                     }
 
                     .email-wrapper {
                         max-width: 560px;
-                        margin: 0 auto;
+                        margin: 0 auto !important;
                     }
 
                     /* ─── Wordmark / Pre-header ─── */
@@ -1055,7 +981,7 @@ class TemplateLoader(BaseLoader):
                     }
 
                     .wordmark {
-                        font-size: 13px;
+                        font-size: 13px !important;
                         font-weight: 600;
                         letter-spacing: 0.1em;
                         text-transform: uppercase;
@@ -1063,20 +989,21 @@ class TemplateLoader(BaseLoader):
                     }
 
                     .badge {
-                        font-size: 11px;
-                        font-weight: 500;
-                        letter-spacing: 0.08em;
-                        text-transform: uppercase;
-                        color: #A0845A;
-                        background: #F5E8D5;
-                        border: 1px solid #E4C99A;
-                        border-radius: 100px;
-                        padding: 4px 12px;
+                        font-size: 11px !important;
+                        font-weight: 500 !important;
+                        letter-spacing: 0.08em !important;
+                        text-transform: uppercase !important;
+                        color: #A0845A !important;
+                        background: #F5E8D5 !important;
+                        border: 1px solid #E4C99A !important;
+                        border-radius: 100px !important;
+                        padding: 4px 12px !important;
+                        margin-left: 12px !important;
                     }
 
                     /* ─── Header Block ─── */
                     .header {
-                        background-color: #141414;
+                        background-color: #141414 !important;
                         border-radius: 16px 16px 0 0;
                         padding: 48px 40px 40px;
                         position: relative;
@@ -1127,24 +1054,18 @@ class TemplateLoader(BaseLoader):
                         color: #E0A84F;
                     }
 
-                    .header-sub {
-                        font-size: 15px;
-                        color: rgba(255,255,255,0.6);
-                        font-weight: 400;
-                    }
-
                     /* ─── Content ─── */
                     .content {
-                        background: #FFFFFF;
+                        background: #FFFFFF !important;
                         border-radius: 0 0 16px 16px;
-                        padding: 40px;
-                        border: 1px solid #E8E2DA;
-                        border-top: none;
+                        padding: 40px !important;
+                        border: 1px solid #E8E2DA !important;
+                        border-top: none !important;
                     }
 
                     .intro-text {
                         font-size: 16px;
-                        color: #444;
+                        color: #444 !important;
                         line-height: 1.7;
                         margin-bottom: 32px;
                     }
@@ -1252,22 +1173,22 @@ class TemplateLoader(BaseLoader):
                     .cred-key {
                         font-family: 'DM Mono', 'Courier New', monospace;
                         font-size: 11px;
-                        color: rgba(255,255,255,0.6);
+                        color: #FFFFFF !important;
                         min-width: 60px;
                         flex-shrink: 0;
                     }
 
                     .cred-value {
                         font-family: 'DM Mono', 'Courier New', monospace;
-                        font-size: 13px;
-                        color: #F0F0F0;
+                        font-size: 15px;
+                        color: #FFFFFF !important;
                         font-weight: 500;
                         word-break: break-all;
                     }
 
                     .cred-password {
                         font-size: 15px;
-                        color: #E0A84F;
+                        color: #FFFFFF !important;
                         letter-spacing: 0.04em;
                     }
 
@@ -1302,26 +1223,26 @@ class TemplateLoader(BaseLoader):
 
                     .cta-button {
                         display: inline-block;
-                        background: #1A1A1A;
-                        color: #FFFFFF;
-                        text-decoration: none;
+                        background: #1A1A1A !important;
+                        color: #FFFFFF !important;
+                        text-decoration: none !important;
                         font-size: 14px;
                         font-weight: 600;
                         letter-spacing: 0.02em;
                         padding: 14px 36px;
                         border-radius: 8px;
-                        transition: background 0.2s;
+                        transition: background 0.2s !important;
                     }
 
                     .cta-sub {
                         margin-top: 10px;
                         font-size: 12px;
-                        color: #999;
+                        color: #999 !important;
                     }
 
                     /* ─── Fallback URL ─── */
                     .fallback-url {
-                        background: #F6F4F0;
+                        background: #F6F4F0 !important;
                         border-radius: 8px;
                         padding: 14px 16px;
                         margin-bottom: 24px;
@@ -1426,9 +1347,7 @@ class TemplateLoader(BaseLoader):
 
                     <!-- Header -->
                     <div class="header">
-                        <div class="header-eyebrow">You have been invited</div>
                         <h1>Join <span>{{ organization_name }}</span></h1>
-                        <p class="header-sub">{{ inviter_name }} has added you to their workspace.</p>
                     </div>
 
                     <!-- Body -->
@@ -1436,30 +1355,21 @@ class TemplateLoader(BaseLoader):
 
                         <p class="intro-text">
                         <strong>{{ inviter_name }}</strong> has invited you to collaborate on
-                        <strong>{{ organization_name }}</strong>. An account has been created
-                        and is ready for you — use the credentials below to sign in.
+                        <strong>{{ organization_name }}</strong>. 
                         </p>
 
                         <!-- Details Grid -->
                         <div class="details-grid">
-                        <div class="detail-cell">
-                            <div class="detail-label">Organization</div>
-                            <div class="detail-value">{{ organization_name }}</div>
-                        </div>
-                        <div class="detail-cell">
-                            <div class="detail-label">Team</div>
-                            <div class="detail-value">{{ team_name if team_name else '—' }}</div>
-                        </div>
-                        <div class="detail-cell">
-                            <div class="detail-label">Role</div>
-                            <div class="detail-value">
-                            <span class="role-pill">{{ role|capitalize }}</span>
+                            <div class="detail-cell">
+                                <div class="detail-label">Team</div>
+                                <div class="detail-value">{{ team_name if team_name else '—' }}</div>
                             </div>
-                        </div>
-                        <div class="detail-cell">
-                            <div class="detail-label">Expires In</div>
-                            <div class="detail-value">7 days</div>
-                        </div>
+                            <div class="detail-cell">
+                                <div class="detail-label">Role</div>
+                                <div class="detail-value">
+                                <span class="role-pill">{{ role|capitalize }}</span>
+                                </div>
+                            </div>
                         </div>
 
                         <!-- Credentials -->
@@ -1477,10 +1387,8 @@ class TemplateLoader(BaseLoader):
 
                         <!-- Security Notice -->
                         <div class="notice">
-                        <div class="notice-icon">&#9432;</div>
                         <div class="notice-text">
-                            This is a temporary password. You will be prompted to set a new
-                            password on your first login.
+                            This is a temporary password. You will update your password after you logged in. Go into your profile settings to update your password.
                         </div>
                         </div>
 
@@ -1490,13 +1398,6 @@ class TemplateLoader(BaseLoader):
                         <p class="cta-sub">This invitation expires in 7 days</p>
                         </div>
 
-                        <div class="divider"></div>
-
-                        <!-- Fallback URL -->
-                        <div class="fallback-url">
-                        <div class="fallback-label">Or open this link in your browser</div>
-                        <div class="fallback-link">{{ invite_url }}</div>
-                        </div>
 
                         <!-- Steps -->
                         <div class="steps-label">What to do next</div>
@@ -1513,10 +1414,6 @@ class TemplateLoader(BaseLoader):
                             <span class="step-num">3</span>
                             Complete the invitation acceptance flow
                         </li>
-                        <li class="step-item">
-                            <span class="step-num">4</span>
-                            Set a new secure password when prompted
-                        </li>
                         </ul>
 
                     </div>
@@ -1524,11 +1421,7 @@ class TemplateLoader(BaseLoader):
                     <!-- Footer -->
                     <div class="footer">
                         <div class="footer-copy">
-                        &copy; 2024 {{ project_name }}. All rights reserved.<br />
-                        Sent to {{ user_email }}
-                        </div>
-                        <div class="footer-ignore">
-                        Didn't expect this? You can safely ignore this email.
+                            &copy; 2024 {{ project_name }}. All rights reserved.<br />
                         </div>
                     </div>
 
@@ -1715,7 +1608,9 @@ class EmailService:
             bool: True if email was sent successfully
         """
         resolved_base_url = base_url or settings.FRONTEND_URL
-        verification_url = f"{resolved_base_url}/verify-email?token={verification_token}"
+        verification_url = (
+            f"{resolved_base_url}/verify-email?token={verification_token}"
+        )
 
         template = self.env.get_template("email_verification")
         html_content = template.render(
@@ -1867,7 +1762,7 @@ class EmailService:
             return False
 
         try:
-            response = self.ses_client.verify_email_identity(EmailAddress=email)
+            self.ses_client.verify_email_identity(EmailAddress=email)
             logger.info(f"Email verification initiated for {email}")
             return True
         except ClientError as e:

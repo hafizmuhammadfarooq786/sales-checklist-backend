@@ -155,10 +155,10 @@ TRANSCRIPT:
             try:
                 analysis = json.loads(analysis_text)
             except json.JSONDecodeError:
-                print(f"⚠️ Could not parse GPT-4 response as JSON")
+                print("⚠️ Could not parse GPT-4 response as JSON")
                 raise ValueError("Invalid GPT-4 response format")
 
-            print(f"✅ GPT-4 analysis completed")
+            print("✅ GPT-4 analysis completed")
             print(f"📊 Analyzed {len(analysis.get('items', []))} criteria")
 
             return analysis

@@ -4,13 +4,11 @@ Generate and download PDF reports for sales sessions
 """
 import logging
 from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from datetime import datetime
 from typing import Optional
-import os
 
 from app.db.session import get_db
 from app.models.session import Session, SessionResponse
@@ -459,7 +457,7 @@ async def get_report(
         logger.info(f"Report not found for session {session_id}, generating on-demand...")
         try:
             # Call generate_report internally
-            result = await generate_report(
+            await generate_report(
                 session_id=session_id,
                 include_checklist_details=True,
                 current_user=current_user,

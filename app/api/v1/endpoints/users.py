@@ -8,12 +8,12 @@ from app.models import User
 from app.models.session import Session, SessionStatus
 from app.schemas.user import (
     UserResponse,
-    UserUpdate,
+    UserSelfUpdate,
     TeamResponse,
     OrganizationResponse,
     PipelineMetrics,
 )
-from app.api.dependencies import get_current_user, get_session_access_filter
+from app.api.dependencies import get_current_active_user, get_session_access_filter
 
 router = APIRouter()
 
@@ -21,7 +21,7 @@ router = APIRouter()
 # Get current authenticated user's profile
 @router.get("/me", response_model=UserResponse)
 async def get_current_user_profile(
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_active_user)
 ):
     """
     Get current authenticated user's profile.
@@ -32,8 +32,8 @@ async def get_current_user_profile(
 # Update current user's profile
 @router.patch("/me", response_model=UserResponse)
 async def update_current_user(
-    user_data: UserUpdate,
-    current_user: User = Depends(get_current_user),
+    user_data: UserSelfUpdate,
+    current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -53,7 +53,7 @@ async def update_current_user(
 # Get current user's team information
 @router.get("/me/team", response_model=TeamResponse)
 async def get_current_user_team(
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -77,7 +77,7 @@ async def get_current_user_team(
 # Get current user's organization information
 @router.get("/me/organization", response_model=OrganizationResponse)
 async def get_current_user_organization(
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -101,7 +101,7 @@ async def get_current_user_organization(
 # Get current user's pipeline metrics
 @router.get("/me/metrics", response_model=PipelineMetrics)
 async def get_current_user_metrics(
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db)
 ):
     """

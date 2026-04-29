@@ -122,7 +122,7 @@ class InvitationService:
             team_id=team_id,
             role=user_role,
             is_active=True,
-            is_verified=False,  # Will be verified when they accept invitation
+            is_verified=True,  # Trusted invite flow: treat invited email as verified
             must_change_password=True  # Force password change on first login
         )
         db.add(new_user)

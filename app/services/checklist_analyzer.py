@@ -38,8 +38,8 @@ class ChecklistAnalyzer:
         query = (
             select(ChecklistItem)
             .join(ChecklistCategory)
-            .where(ChecklistItem.is_active == True)
-            .where(ChecklistCategory.is_active == True)
+            .where(ChecklistItem.is_active.is_(True))
+            .where(ChecklistCategory.is_active.is_(True))
             .order_by(ChecklistCategory.order)
         )
         result = await db.execute(query)
@@ -64,7 +64,7 @@ class ChecklistAnalyzer:
         query = (
             select(ChecklistItemBehaviour)
             .where(ChecklistItemBehaviour.checklist_item_id.in_(item_ids))
-            .where(ChecklistItemBehaviour.isactive == True)
+            .where(ChecklistItemBehaviour.isactive.is_(True))
             .order_by(
                 ChecklistItemBehaviour.checklist_item_id,
                 ChecklistItemBehaviour.order,
@@ -338,7 +338,7 @@ Return ONLY valid JSON, no additional text:
             error_pos = getattr(e, 'pos', 0)
             start = max(0, error_pos - 200)
             end = min(len(cleaned_text), error_pos + 200)
-            print(f"Problematic text around error position:")
+            print("Problematic text around error position:")
             print(f"...{cleaned_text[start:end]}...")
             
             # Step 6: Save full response for debugging
@@ -422,7 +422,7 @@ Return ONLY valid JSON, no additional text:
             result_text = response.choices[0].message.content
 
             # Log the response for debugging
-            print(f"=== RAW AI RESPONSE (first 1000 chars) ===")
+            print("=== RAW AI RESPONSE (first 1000 chars) ===")
             print(result_text[:1000])
             print(f"=== END RAW RESPONSE (total length: {len(result_text)}) ===")
 
@@ -467,14 +467,14 @@ CRITICAL REQUIREMENTS:
                     )
                     
                     fixed_text = fix_response.choices[0].message.content
-                    print(f"=== FIXED AI RESPONSE (first 1000 chars) ===")
+                    print("=== FIXED AI RESPONSE (first 1000 chars) ===")
                     print(fixed_text[:1000])
                     print(f"=== END FIXED RESPONSE (total length: {len(fixed_text)}) ===")
                     
                     # Try to parse the fixed response
                     try:
                         result_json = self.parse_json_response(fixed_text, session_id)
-                    except ValueError as fix_error:
+                    except ValueError:
                         # Even the fixed version failed, raise the original error
                         raise parse_error
                 else:

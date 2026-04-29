@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 import logging
@@ -13,24 +14,39 @@ from app.schemas.user import (
 from app.services.auth_service import auth_service
 from app.services.email_service import email_service
 from app.api.dependencies import get_current_active_user
+from app.core.config import settings
+from app.models.user import UserRole
 
 logger = logging.getLogger(__name__)
+
+
+class RegisterResponse(BaseModel):
+    message: str
 
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
 
 # Register a new user account
-@router.post("/register", response_model=Token, status_code=status.HTTP_201_CREATED)
+@router.post("/register", response_model=RegisterResponse, status_code=status.HTTP_201_CREATED)
 async def register(
     user_data: UserCreate,
     db: AsyncSession = Depends(get_db)
-) -> Token:
+) -> RegisterResponse:
     """
-    Register a new user account.
-    Creates a new user with hashed password and sends email verification.
-    Returns JWT token for immediate login.
+    Register a new user account (disabled in invite-only mode).
     """
+    if not settings.ALLOW_PUBLIC_SIGNUP:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Public signup is disabled. Ask your organization admin for an invitation."
+        )
+
+    if user_data.role != UserRole.REP:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Public signup can only create REP users."
+        )
     
     # Check if user already exists
     result = await db.execute(
@@ -47,7 +63,6 @@ async def register(
     # Create new user
     try:
         user = await auth_service.create_user(db, user_data)
-        token_response = await auth_service.create_token_response(user)
         
         # Send email verification email
         if user.email_verification_token:
@@ -61,13 +76,29 @@ async def register(
                 if email_sent:
                     logger.info(f"Verification email sent to {user.email}")
                 else:
-                    logger.warning(f"Failed to send verification email to {user.email}")
+                    await db.delete(user)
+                    await db.commit()
+                    raise HTTPException(
+                        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                        detail="Failed to send verification email. Please try again."
+                    )
+            except HTTPException:
+                raise
             except Exception as email_error:
                 logger.error(f"Email service error: {str(email_error)}")
-                # Don't fail registration if email fails
+                await db.delete(user)
+                await db.commit()
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="Failed to send verification email. Please try again."
+                )
         
-        return token_response
+        return RegisterResponse(
+            message="Registration successful. Please verify your email before logging in."
+        )
         
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"User registration error: {str(e)}")
         raise HTTPException(

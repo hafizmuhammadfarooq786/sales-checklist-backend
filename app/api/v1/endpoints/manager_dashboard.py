@@ -6,8 +6,7 @@ import logging
 from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_, or_, func, case, desc
-from sqlalchemy.orm import selectinload, joinedload
+from sqlalchemy import select, and_, func, case, desc
 from typing import List, Optional
 from pydantic import BaseModel
 
@@ -515,7 +514,7 @@ async def get_salesperson_no_report(
     responses_result = await db.execute(
         select(
             func.count(SessionResponse.id).label('total_responses'),
-            func.sum(case((SessionResponse.ai_answer == False, 1), else_=0)).label('no_responses')
+            func.sum(case((SessionResponse.ai_answer.is_(False), 1), else_=0)).label('no_responses')
         ).where(
             and_(
                 SessionResponse.session_id == Session.id,
@@ -541,7 +540,7 @@ async def get_salesperson_no_report(
                 SessionResponse.session_id == Session.id,
                 Session.user_id == salesperson_id,
                 SessionResponse.item_id == ChecklistItem.id,
-                SessionResponse.ai_answer == False
+                SessionResponse.ai_answer.is_(False)
             )
         ).group_by(ChecklistItem.id, ChecklistItem.title, ChecklistCategory.name)
         .order_by(desc(func.count(SessionResponse.id)))
@@ -609,7 +608,7 @@ async def get_team_no_summary(
     responses_result = await db.execute(
         select(
             func.count(SessionResponse.id).label('total_responses'),
-            func.sum(case((SessionResponse.ai_answer == False, 1), else_=0)).label('no_responses')
+            func.sum(case((SessionResponse.ai_answer.is_(False), 1), else_=0)).label('no_responses')
         ).where(
             and_(
                 SessionResponse.session_id == Session.id,
@@ -635,7 +634,7 @@ async def get_team_no_summary(
                 SessionResponse.session_id == Session.id,
                 Session.user_id.in_(team_member_ids),
                 SessionResponse.item_id == ChecklistItem.id,
-                SessionResponse.ai_answer == False
+                SessionResponse.ai_answer.is_(False)
             )
         ).group_by(ChecklistItem.id, ChecklistItem.title, ChecklistCategory.name)
         .order_by(desc(func.count(SessionResponse.id)))
@@ -927,7 +926,7 @@ async def get_dashboard_overview(
                 SessionResponse.session_id == Session.id,
                 Session.user_id.in_(team_member_ids),
                 SessionResponse.item_id == ChecklistItem.id,
-                SessionResponse.ai_answer == False
+                SessionResponse.ai_answer.is_(False)
             )
         ).group_by(ChecklistItem.id, ChecklistItem.title, ChecklistCategory.name)
         .order_by(desc(func.count(SessionResponse.id)))

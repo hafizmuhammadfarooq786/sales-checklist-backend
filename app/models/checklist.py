@@ -1,7 +1,7 @@
 """
 Checklist models - The Sales Checklist™ Framework (10 essential items)
 """
-from sqlalchemy import Column, Integer, String, Text, Boolean, ForeignKey, Float
+from sqlalchemy import Column, Integer, String, Text, Boolean, ForeignKey
 from sqlalchemy.orm import relationship
 
 from app.models.base import Base, TimestampMixin

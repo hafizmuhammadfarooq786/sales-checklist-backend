@@ -6,9 +6,9 @@ import os
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_, or_
+from sqlalchemy import select
 from sqlalchemy.orm import selectinload
-from typing import List, Optional
+from typing import Optional
 
 from app.db.session import get_db
 from app.models.manager_note import ManagerNote, NoteType
@@ -40,7 +40,6 @@ def get_audio_url(note: ManagerNote) -> Optional[str]:
         return None
 
     from app.services.s3_service import get_s3_service
-    from app.core.config import settings
 
     # If audio is stored in S3, generate presigned URL
     if note.audio_s3_bucket:

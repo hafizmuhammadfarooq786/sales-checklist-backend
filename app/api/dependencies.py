@@ -10,7 +10,6 @@ from typing import Optional
 from app.db.session import get_db
 from app.models.user import User, UserRole
 from app.services.auth_service import auth_service
-from app.core.config import settings
 
 
 security = HTTPBearer(auto_error=False)
@@ -85,6 +84,31 @@ async def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
+    if not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User account is inactive or has been deleted"
+        )
+
+    # Additional check for soft delete (should already be blocked by get_current_user)
+    if user.deleted_at is not None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User account has been deleted"
+        )
+
+    if not user.is_verified:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Email verification is required before accessing this resource"
+        )
+
+    if user.role != UserRole.SYSTEM_ADMIN and not user.organization_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User is not assigned to an organization"
+        )
+
     return user
 
 
@@ -92,23 +116,42 @@ async def get_current_active_user(
     current_user: User = Depends(get_current_user)
 ) -> User:
     """
-    Get the current authenticated and active user.
-    Blocks inactive or deleted users.
+    Backward-compatible alias for fully validated current user.
     """
-    if not current_user.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="User account is inactive or has been deleted"
-        )
-
-    # Additional check for soft delete (should already be blocked by get_current_user)
-    if current_user.deleted_at is not None:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="User account has been deleted"
-        )
-
     return current_user
+
+
+async def get_current_invitation_user(
+    user_id: int = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db)
+) -> User:
+    """
+    Current user for invitation acceptance flow.
+
+    Allows authenticated users who are active but not yet verified.
+    """
+    result = await db.execute(
+        select(User).where(
+            User.id == user_id,
+            User.deleted_at.is_(None)
+        )
+    )
+    user = result.scalar_one_or_none()
+
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User account not found or has been deleted",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    if not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User account is inactive"
+        )
+
+    return user
 
 
 def require_roles(*roles: UserRole):

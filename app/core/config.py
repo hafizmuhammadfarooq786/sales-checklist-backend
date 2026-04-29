@@ -2,7 +2,6 @@
 Configuration settings for The Sales Checklist™ API
 """
 from typing import List
-from pathlib import Path
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field
 
@@ -26,6 +25,8 @@ class Settings(BaseSettings):
     SECRET_KEY: str = Field(default="d074749f546b8591db9a9b51798a373bedbce66b8e8e6dbc0e9dce48a167e8bf")
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 7  # 7 days
+    ALLOW_PUBLIC_SIGNUP: bool = Field(default=False)
+    INTERNAL_ADMIN_API_KEY: str = Field(default="")
     
     # Password validation
     MIN_PASSWORD_LENGTH: int = 8

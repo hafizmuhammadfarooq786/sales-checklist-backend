@@ -4,7 +4,6 @@ Handles uploading files to AWS S3 bucket
 """
 import boto3
 from botocore.exceptions import ClientError
-from pathlib import Path
 from typing import Optional
 import logging
 

@@ -2,7 +2,7 @@
 Audio file upload endpoints
 """
 import logging
-from fastapi import APIRouter, Depends, HTTPException, status, File, UploadFile, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, BackgroundTasks
 from fastapi.concurrency import run_in_threadpool
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -194,7 +194,7 @@ async def upload_audio_file(
                     storage_type = "s3"
                     file_path = s3_url  # Store S3 URL as file_path
                     logger.info(f"File uploaded to S3: {s3_url}")
-                except Exception as e:
+                except Exception:
                     # Fall back to local storage if S3 fails
                     logger.warning(f"S3 upload failed for session {session_id}, falling back to local storage", exc_info=True)
                     local_dir = Path("uploads")
