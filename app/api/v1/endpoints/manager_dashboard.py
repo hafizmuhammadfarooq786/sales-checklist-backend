@@ -17,6 +17,10 @@ from app.models.scoring import ScoringResult
 from app.models.user import User, UserRole
 from app.models.checklist import ChecklistItem, ChecklistCategory
 from app.api.dependencies import get_current_user
+from app.services.risk_band_service import (
+    GOOD_PERFORMANCE_MIN_SCORE,
+    HEALTHY_MIN_SCORE,
+)
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -231,7 +235,7 @@ async def get_dashboard_stats(
             and_(
                 Session.user_id.in_(team_member_ids),
                 Session.id == ScoringResult.session_id,
-                ScoringResult.total_score <= 30
+                ScoringResult.total_score < GOOD_PERFORMANCE_MIN_SCORE
             )
         )
     )
@@ -301,13 +305,13 @@ async def get_dashboard_notifications(
             last_updated=session.updated_at
         ))
 
-    # At-risk deals (scores 0-30)
+    # At-risk deals (scores below good-performance threshold)
     at_risk_result = await db.execute(
         select(Session, User, ScoringResult).where(
             and_(
                 Session.user_id.in_(team_member_ids),
                 Session.id == ScoringResult.session_id,
-                ScoringResult.total_score <= 30,
+                ScoringResult.total_score < GOOD_PERFORMANCE_MIN_SCORE,
                 Session.user_id == User.id
             )
         ).order_by(ScoringResult.total_score.asc())
@@ -327,7 +331,7 @@ async def get_dashboard_notifications(
             last_updated=session.updated_at
         ))
 
-    # High-scoring lost deals (70+ but lost/no decision/disengaged)
+    # High-scoring lost deals (healthy threshold+ but lost/no decision/disengaged)
     # Try with DISENGAGED first, fallback to just LOST and NO_DECISION if enum doesn't have DISENGAGED yet
     try:
         high_score_lost_result = await db.execute(
@@ -335,7 +339,7 @@ async def get_dashboard_notifications(
                 and_(
                     Session.user_id.in_(team_member_ids),
                     Session.id == ScoringResult.session_id,
-                    ScoringResult.total_score >= 70,
+                    ScoringResult.total_score >= HEALTHY_MIN_SCORE,
                     Session.deal_stage.in_([DealStage.LOST, DealStage.NO_DECISION, DealStage.DISENGAGED]),
                     Session.user_id == User.id
                 )
@@ -353,7 +357,7 @@ async def get_dashboard_notifications(
                     and_(
                         Session.user_id.in_(team_member_ids),
                         Session.id == ScoringResult.session_id,
-                        ScoringResult.total_score >= 70,
+                        ScoringResult.total_score >= HEALTHY_MIN_SCORE,
                         Session.deal_stage.in_([DealStage.LOST, DealStage.NO_DECISION]),
                         Session.user_id == User.id
                     )
@@ -736,7 +740,7 @@ async def get_dashboard_overview(
             and_(
                 Session.user_id.in_(team_member_ids),
                 Session.id == ScoringResult.session_id,
-                ScoringResult.total_score <= 30
+                ScoringResult.total_score < GOOD_PERFORMANCE_MIN_SCORE
             )
         )
     )
@@ -780,13 +784,13 @@ async def get_dashboard_overview(
             last_updated=session.updated_at
         ))
 
-    # At-risk deals (scores 0-30)
+    # At-risk deals (scores below good-performance threshold)
     at_risk_result = await db.execute(
         select(Session, User, ScoringResult).where(
             and_(
                 Session.user_id.in_(team_member_ids),
                 Session.id == ScoringResult.session_id,
-                ScoringResult.total_score <= 30,
+                ScoringResult.total_score < GOOD_PERFORMANCE_MIN_SCORE,
                 Session.user_id == User.id
             )
         ).order_by(ScoringResult.total_score.asc())
@@ -806,14 +810,14 @@ async def get_dashboard_overview(
             last_updated=session.updated_at
         ))
 
-    # High-scoring lost deals (70+ but lost/no decision/disengaged)
+    # High-scoring lost deals (healthy threshold+ but lost/no decision/disengaged)
     try:
         high_score_lost_result = await db.execute(
             select(Session, User, ScoringResult).where(
                 and_(
                     Session.user_id.in_(team_member_ids),
                     Session.id == ScoringResult.session_id,
-                    ScoringResult.total_score >= 70,
+                    ScoringResult.total_score >= HEALTHY_MIN_SCORE,
                     Session.deal_stage.in_([DealStage.LOST, DealStage.NO_DECISION, DealStage.DISENGAGED]),
                     Session.user_id == User.id
                 )
@@ -830,7 +834,7 @@ async def get_dashboard_overview(
                     and_(
                         Session.user_id.in_(team_member_ids),
                         Session.id == ScoringResult.session_id,
-                        ScoringResult.total_score >= 70,
+                        ScoringResult.total_score >= HEALTHY_MIN_SCORE,
                         Session.deal_stage.in_([DealStage.LOST, DealStage.NO_DECISION]),
                         Session.user_id == User.id
                     )

@@ -7,7 +7,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, or_
 from sqlalchemy.orm import selectinload
 from typing import List, Optional
-from datetime import datetime
 
 from app.db.session import get_db
 from app.models import Organization, User, Team, OrganizationSettings
@@ -330,24 +329,19 @@ async def delete_user(
     current_user: User = Depends(require_roles(UserRole.SYSTEM_ADMIN))
 ):
     """
-    Soft delete a user (SYSTEM_ADMIN only).
+    Hard delete a user (SYSTEM_ADMIN only).
 
-    This marks the user as deleted without removing their data from the database.
-    All sessions, score history, and associated data are preserved.
-    The user will be blocked from logging in and hidden from user lists.
+    This permanently removes the user record.
     """
     result = await db.execute(
-        select(User).where(
-            User.id == user_id,
-            User.deleted_at.is_(None)  # Only get non-deleted users
-        )
+        select(User).where(User.id == user_id)
     )
     user = result.scalar_one_or_none()
 
     if not user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"User with ID {user_id} not found or already deleted"
+            detail=f"User with ID {user_id} not found"
         )
 
     # Prevent deleting yourself
@@ -357,11 +351,8 @@ async def delete_user(
             detail="Cannot delete your own user account"
         )
 
-    # Soft delete: mark as deleted instead of removing from database
-    user.deleted_at = datetime.utcnow()
-    user.deleted_by = current_user.id
-    user.is_active = False  # Also mark as inactive
-
+    # Hard delete: permanently remove user row.
+    await db.delete(user)
     await db.commit()
 
 

@@ -325,7 +325,8 @@ async def list_organization_users(
         selectinload(User.team)
     ).where(
         User.organization_id == current_user.organization_id,
-        User.deleted_at.is_(None)  # Exclude soft-deleted users
+        User.deleted_at.is_(None),  # Exclude soft-deleted users
+        User.is_verified.is_(True)  # Only show accepted (verified) members
     )
 
     # Apply RBAC - MANAGER can only see their team
@@ -484,6 +485,11 @@ async def cancel_invitation(
     except PermissionError as e:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(e)
+        )
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e)
         )
 

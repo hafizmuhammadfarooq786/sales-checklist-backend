@@ -194,14 +194,15 @@ async def upsert_single(
     ):
         return active
 
+    # Versioning rule:
+    # - Never overwrite an existing active row in-place if content changes.
+    # - Instead, mark the current active row as inactive and create a new row
+    #   with version = previous_version + 1.
     if active:
         ensure_note_owner(active, user_id)
-        active.note_text = note_text
-        active.decision_influencers = stored_infl
-        active.structured_content = structured_content
-        active.updated_by_user_id = user_id
+        # Preserve the existing row as historical version.
+        active.is_active = False
         await db.flush()
-        return await fetch_note_with_editor(db, active.id)
 
     max_ver_res = await db.execute(
         select(func.max(ChecklistItemNote.version)).where(

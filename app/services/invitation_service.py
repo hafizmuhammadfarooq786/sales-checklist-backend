@@ -168,7 +168,7 @@ class InvitationService:
         invite_url = f"{frontend_url}/accept-invite?token={token}"
         inviter_name = f"{inviter.first_name} {inviter.last_name}"
 
-        await self.email_service.send_invitation_email(
+        email_sent = await self.email_service.send_invitation_email(
             to_email=email,
             organization_name=organization.name,
             inviter_name=inviter_name,
@@ -177,6 +177,11 @@ class InvitationService:
             team_name=team_name,
             temp_password=temp_password  # Pass temporary password to email
         )
+
+        if not email_sent:
+            # Hard-fail so the DB transaction can rollback and the invite
+            # doesn't look successful when the email wasn't actually sent.
+            raise ValueError(f"Failed to send invitation email to {email}")
 
         await db.commit()
         return invitation
@@ -271,6 +276,9 @@ class InvitationService:
 
         # Mark user as verified (they successfully logged in with temp password)
         user.is_verified = True
+        # Mark user as active once the invitation is accepted.
+        # This keeps the "already members" view consistent with invitation lifecycle.
+        user.is_active = True
 
         # Mark invitation as accepted
         invitation.accepted_at = datetime.utcnow()
@@ -313,7 +321,8 @@ class InvitationService:
         organization_id: int
     ) -> bool:
         """
-        Cancel (delete) a pending invitation.
+        Cancel (hard-delete) a pending invitation.
+        Also hard-deletes the corresponding invited user account (if still unverified).
 
         Args:
             db: Database session
@@ -337,7 +346,24 @@ class InvitationService:
         if invitation.organization_id != organization_id:
             raise PermissionError("Invitation does not belong to this organization")
 
+        if invitation.accepted_at is not None:
+            raise ValueError("Accepted invitations cannot be deleted")
+
+        invited_user_result = await db.execute(
+            select(User).where(
+                User.email == invitation.email,
+                User.organization_id == invitation.organization_id
+            )
+        )
+        invited_user = invited_user_result.scalar_one_or_none()
+
         await db.delete(invitation)
+
+        # Hard-delete the placeholder invited user account as part of invite cancellation.
+        # Only remove users who have not completed invite acceptance.
+        if invited_user and not invited_user.is_verified:
+            await db.delete(invited_user)
+
         await db.commit()
         return True
 

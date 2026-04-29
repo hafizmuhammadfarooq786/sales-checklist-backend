@@ -2,6 +2,7 @@
 Configuration settings for The Sales Checklist™ API
 """
 from typing import List
+from pathlib import Path
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field
 
@@ -97,6 +98,17 @@ class Settings(BaseSettings):
     # Email (Amazon SES)
     SES_REGION: str = Field(default="us-east-2")
     SES_SENDER_EMAIL: str = Field(default="")
+
+    # Email (SMTP fallback)
+    # When SES is not configured (or SES fails), the app can send emails via SMTP.
+    SMTP_HOST: str = Field(default="")
+    SMTP_PORT: int = Field(default=587)
+    SMTP_USERNAME: str = Field(default="")
+    SMTP_PASSWORD: str = Field(default="")
+    SMTP_SENDER_EMAIL: str = Field(default="")
+    SMTP_USE_TLS: bool = Field(default=True)
+    SMTP_USE_SSL: bool = Field(default=False)
+    SMTP_TIMEOUT_SECONDS: int = Field(default=30)
 
     # Salesforce
     SALESFORCE_CLIENT_ID: str = Field(default="")

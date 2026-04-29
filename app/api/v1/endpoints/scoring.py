@@ -15,6 +15,7 @@ from app.models.checklist import ChecklistItem, ChecklistCategory
 from app.models.scoring import ScoringResult, ScoreHistory
 from app.models.user import User
 from app.api.dependencies import get_current_user, get_session_access_filter
+from app.services.risk_band_service import get_risk_band, get_risk_label
 
 router = APIRouter()
 
@@ -123,19 +124,10 @@ async def calculate_session_score(
     # Calculate percentage
     percentage_score = (total_score / max_possible_score * 100) if max_possible_score > 0 else 0
 
-    # Determine risk band based on new thresholds
-    # 70-100: Low Risk (Green)
-    # 40-69: Medium Risk (Yellow)
-    # 0-39: Critical Risk (Red)
-    if percentage_score >= 70:
-        risk_band = "green"
-        risk_label = "Low Risk"
-    elif percentage_score >= 40:
-        risk_band = "yellow"
-        risk_label = "Medium Risk"
-    else:
-        risk_band = "red"
-        risk_label = "Critical Risk"
+    # Determine risk band and label from centralized thresholds.
+    risk_band_enum = get_risk_band(percentage_score)
+    risk_band = risk_band_enum.value
+    risk_label = get_risk_label(risk_band_enum)
 
     # Get top 3 strengths (highest scoring items)
     strengths = sorted(validated_items, key=lambda x: x["score"], reverse=True)[:3]
@@ -163,7 +155,7 @@ async def calculate_session_score(
     scoring_result = ScoringResult(
         session_id=session_id,
         total_score=percentage_score,
-        risk_band=risk_band,
+        risk_band=risk_band_enum,
         category_scores=category_scores,
         top_strengths=[s['title'] for s in strengths[:3]],
         top_gaps=[g['title'] for g in gaps[:3]],
@@ -180,7 +172,7 @@ async def calculate_session_score(
         session_id=session_id,
         scoring_result_id=scoring_result.id,
         total_score=percentage_score,
-        risk_band=risk_band,
+        risk_band=risk_band_enum,
         items_validated=len(validated_items),
         items_total=len(responses),
         calculated_at=datetime.utcnow(),
