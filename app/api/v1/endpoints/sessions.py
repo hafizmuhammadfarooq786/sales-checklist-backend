@@ -2,8 +2,10 @@
 Session API endpoints
 """
 import logging
-from datetime import datetime
-from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
+from datetime import date, datetime, timedelta, time
+from typing import Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Query, status, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 
@@ -27,6 +29,7 @@ from app.schemas.checklist import (
     ChecklistItemUpdateResponse,
     ChecklistSubmitResponse,
 )
+from app.core.dashboard_date import get_dashboard_date_range
 from app.api.dependencies import (
     get_current_user_id,
     get_current_user,
@@ -343,18 +346,39 @@ async def list_sessions(
 
 @router.get("/analytics/summary")
 async def get_sessions_analytics_summary(
+    start_date: Optional[date] = Query(
+        None,
+        description="Range start (UTC). Defaults to the first day of the current month.",
+    ),
+    end_date: Optional[date] = Query(
+        None,
+        description="Range end (UTC). Defaults to today.",
+    ),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """
     Aggregate analytics payload to avoid frontend N+1 score fetches.
     """
+    if start_date and end_date and start_date > end_date:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="start_date must be on or before end_date",
+        )
+
     access_filter = get_session_access_filter(current_user)
+    range_start, range_end, resolved_start, resolved_end = get_dashboard_date_range(
+        start_date, end_date
+    )
 
     rows_result = await db.execute(
         select(Session, ScoringResult)
         .outerjoin(ScoringResult, ScoringResult.session_id == Session.id)
-        .where(access_filter)
+        .where(
+            access_filter,
+            Session.created_at >= range_start,
+            Session.created_at <= range_end,
+        )
         .order_by(Session.created_at.desc())
     )
     rows = rows_result.all()
@@ -398,10 +422,44 @@ async def get_sessions_analytics_summary(
         else None
     )
 
+    period_days = (resolved_end - resolved_start).days + 1
+    previous_end_date = resolved_start - timedelta(days=1)
+    previous_start_date = previous_end_date - timedelta(days=period_days - 1)
+    previous_start = datetime.combine(previous_start_date, time.min)
+    previous_end = datetime.combine(
+        previous_end_date,
+        time(23, 59, 59, 999999),
+    )
+
+    previous_rows = await db.execute(
+        select(ScoringResult.total_score)
+        .join(Session, ScoringResult.session_id == Session.id)
+        .where(
+            access_filter,
+            Session.created_at >= previous_start,
+            Session.created_at <= previous_end,
+            ScoringResult.total_score.isnot(None),
+        )
+    )
+    previous_scores = [row[0] for row in previous_rows.all()]
+    previous_avg = (
+        round(sum(previous_scores) / len(previous_scores))
+        if previous_scores
+        else None
+    )
+    score_change_percent = None
+    if avg_score is not None and previous_avg is not None and previous_avg > 0:
+        score_change_percent = round(
+            ((avg_score - previous_avg) / previous_avg) * 100
+        )
+
     return {
+        "start_date": resolved_start.isoformat(),
+        "end_date": resolved_end.isoformat(),
         "total_sessions": len(sessions_payload),
         "completed_sessions": len(completed_scored),
         "average_score": avg_score,
+        "score_change_percent": score_change_percent,
         "risk_distribution": risk_distribution,
         "sessions": sessions_payload,
     }
