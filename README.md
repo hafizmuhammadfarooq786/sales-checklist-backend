@@ -14,10 +14,11 @@ FastAPI backend for session management, audio upload, Whisper transcription, AI 
 - PostgreSQL database URL ready for the app
 - For production-style background jobs: Redis and a running Celery worker
 
-Copy environment template and fill in values:
+Create the `.env` file and fill in values (a single real `.env` is the only env file used — there is no template/example file):
 
 ```bash
-cp .env.example .env
+# create sales-checklist-backend/.env with at least:
+#   SECRET_KEY, DATABASE_URL, OPENAI_API_KEY
 ```
 
 `DATABASE_URL` must use the **async** driver expected by the app, for example:
@@ -47,7 +48,7 @@ Long-running work (transcribe + checklist analysis) can run in a **Celery worker
 | `USE_CELERY_FOR_TRANSCRIPTION=false` (default) | Uses `BackgroundTasks` after upload / start-transcribe. No worker required. |
 | `USE_CELERY_FOR_TRANSCRIPTION=true` | Enqueues `transcription.process_session` on Redis. Requires a worker and broker. |
 
-Broker/result URLs (see `.env.example`):
+Broker/result URLs (see `.env`):
 
 - `CELERY_BROKER_URL` (e.g. `redis://localhost:6379/1`)
 - `CELERY_RESULT_BACKEND` (e.g. `redis://localhost:6379/2`)

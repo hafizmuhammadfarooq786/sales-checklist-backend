@@ -3,7 +3,7 @@ Manager Dashboard API endpoints
 Provides analytics, notifications, and team insights for managers
 """
 import logging
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, func, case, desc
@@ -16,6 +16,7 @@ from app.models.scoring import ScoringResult
 from app.models.user import User, UserRole
 from app.models.checklist import ChecklistItem, ChecklistCategory
 from app.api.dependencies import get_current_user
+from app.core.dashboard_date import get_dashboard_date_range
 from app.services.risk_band_service import (
     GOOD_PERFORMANCE_MIN_SCORE,
     HEALTHY_MIN_SCORE,
@@ -669,7 +670,15 @@ async def get_dashboard_overview(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     sort_by: str = Query("updated_at", regex="^(updated_at|created_at|score|salesperson)$"),
-    order: str = Query("desc", regex="^(asc|desc)$")
+    order: str = Query("desc", regex="^(asc|desc)$"),
+    start_date: Optional[date] = Query(
+        None,
+        description="Range start (UTC). Defaults to the first day of the current month.",
+    ),
+    end_date: Optional[date] = Query(
+        None,
+        description="Range end (UTC). Defaults to today.",
+    ),
 ):
     """
     Get complete manager dashboard overview in a single request
@@ -695,7 +704,19 @@ async def get_dashboard_overview(
             detail="Only managers and admins can access dashboard overview"
         )
 
+    if start_date and end_date and start_date > end_date:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="start_date must be on or before end_date",
+        )
+
     team_member_ids = await get_team_members(current_user, db)
+    range_start, range_end, _, _ = get_dashboard_date_range(start_date, end_date)
+    as_of_session_filter = and_(
+        Session.created_at >= range_start,
+        Session.created_at <= range_end,
+        Session.updated_at <= range_end,
+    )
 
     # 1. Get Stats
     # Count active checklists
@@ -706,7 +727,8 @@ async def get_dashboard_overview(
                 Session.status.in_([
                     SessionStatus.PENDING_REVIEW,
                     SessionStatus.COMPLETED
-                ])
+                ]),
+                as_of_session_filter,
             )
         )
     )
@@ -717,7 +739,8 @@ async def get_dashboard_overview(
         select(func.avg(ScoringResult.total_score)).where(
             and_(
                 ScoringResult.session_id == Session.id,
-                Session.user_id.in_(team_member_ids)
+                Session.user_id.in_(team_member_ids),
+                as_of_session_filter,
             )
         )
     )
@@ -728,8 +751,10 @@ async def get_dashboard_overview(
         select(func.count(Session.id)).where(
             and_(
                 Session.user_id.in_(team_member_ids),
-                Session.updated_at < datetime.utcnow() - timedelta(days=30),
-                Session.status != SessionStatus.COMPLETED
+                Session.updated_at < range_end - timedelta(days=30),
+                Session.updated_at <= range_end,
+                Session.status != SessionStatus.COMPLETED,
+                as_of_session_filter,
             )
         )
     )
@@ -739,7 +764,8 @@ async def get_dashboard_overview(
             and_(
                 Session.user_id.in_(team_member_ids),
                 Session.id == ScoringResult.session_id,
-                ScoringResult.total_score < GOOD_PERFORMANCE_MIN_SCORE
+                ScoringResult.total_score < GOOD_PERFORMANCE_MIN_SCORE,
+                as_of_session_filter,
             )
         )
     )
@@ -759,9 +785,11 @@ async def get_dashboard_overview(
         select(Session, User, ScoringResult).where(
             and_(
                 Session.user_id.in_(team_member_ids),
-                Session.updated_at < datetime.utcnow() - timedelta(days=30),
+                Session.updated_at < range_end - timedelta(days=30),
+                Session.updated_at <= range_end,
                 Session.status != SessionStatus.COMPLETED,
-                Session.user_id == User.id
+                Session.user_id == User.id,
+                as_of_session_filter,
             )
         ).outerjoin(ScoringResult, Session.id == ScoringResult.session_id)
         .order_by(Session.updated_at.asc())
@@ -770,7 +798,7 @@ async def get_dashboard_overview(
 
     stalled_deals = []
     for session, user, scoring in stalled_result:
-        days_inactive = (datetime.utcnow() - session.updated_at).days
+        days_inactive = (range_end - session.updated_at).days
         stalled_deals.append(DealAlert(
             session_id=session.id,
             customer_name=session.customer_name,
@@ -790,7 +818,8 @@ async def get_dashboard_overview(
                 Session.user_id.in_(team_member_ids),
                 Session.id == ScoringResult.session_id,
                 ScoringResult.total_score < GOOD_PERFORMANCE_MIN_SCORE,
-                Session.user_id == User.id
+                Session.user_id == User.id,
+                as_of_session_filter,
             )
         ).order_by(ScoringResult.total_score.asc())
         .limit(50)
@@ -818,7 +847,8 @@ async def get_dashboard_overview(
                     Session.id == ScoringResult.session_id,
                     ScoringResult.total_score >= HEALTHY_MIN_SCORE,
                     Session.deal_stage.in_([DealStage.LOST, DealStage.NO_DECISION, DealStage.DISENGAGED]),
-                    Session.user_id == User.id
+                    Session.user_id == User.id,
+                    as_of_session_filter,
                 )
             ).order_by(desc(ScoringResult.total_score))
             .limit(50)
@@ -835,7 +865,8 @@ async def get_dashboard_overview(
                         Session.id == ScoringResult.session_id,
                         ScoringResult.total_score >= HEALTHY_MIN_SCORE,
                         Session.deal_stage.in_([DealStage.LOST, DealStage.NO_DECISION]),
-                        Session.user_id == User.id
+                        Session.user_id == User.id,
+                        as_of_session_filter,
                     )
                 ).order_by(desc(ScoringResult.total_score))
                 .limit(50)
@@ -873,7 +904,8 @@ async def get_dashboard_overview(
                     SessionStatus.PENDING_REVIEW,
                     SessionStatus.COMPLETED
                 ]),
-                Session.user_id == User.id
+                Session.user_id == User.id,
+                as_of_session_filter,
             )
         )
         .outerjoin(ScoringResult, Session.id == ScoringResult.session_id)
@@ -908,7 +940,10 @@ async def get_dashboard_overview(
 
     # 4. Get Team Training Gaps (top missing items)
     total_sessions_result = await db.execute(
-        select(func.count(Session.id)).where(Session.user_id.in_(team_member_ids))
+        select(func.count(Session.id)).where(
+            Session.user_id.in_(team_member_ids),
+            as_of_session_filter,
+        )
     )
     total_sessions = total_sessions_result.scalar() or 0
 
@@ -926,7 +961,8 @@ async def get_dashboard_overview(
                 SessionResponse.session_id == Session.id,
                 Session.user_id.in_(team_member_ids),
                 SessionResponse.item_id == ChecklistItem.id,
-                SessionResponse.ai_answer.is_(False)
+                SessionResponse.ai_answer.is_(False),
+                as_of_session_filter,
             )
         ).group_by(ChecklistItem.id, ChecklistItem.title, ChecklistCategory.name)
         .order_by(desc(func.count(SessionResponse.id)))

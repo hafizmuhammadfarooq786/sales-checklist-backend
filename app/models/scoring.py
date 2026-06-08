@@ -38,7 +38,7 @@ class ScoringResult(Base, TimestampMixin):
 
     # Metadata
     items_validated = Column(Integer, nullable=False, default=0)  # Count of items with True
-    items_total = Column(Integer, nullable=False, default=92)
+    items_total = Column(Integer, nullable=False, default=0)
 
     # Relationships
     session = relationship("Session", back_populates="scoring_result")
@@ -103,11 +103,6 @@ class CoachingFeedback(Base, TimestampMixin):
     strengths = Column(JSON, nullable=True)  # List of strengths with explanations
     improvement_areas = Column(JSON, nullable=True)  # List of areas to work on
     action_items = Column(JSON, nullable=True)  # Specific recommended actions
-
-    # Audio coaching (TTS from ElevenLabs)
-    audio_s3_bucket = Column(String(255), nullable=True)
-    audio_s3_key = Column(String(500), nullable=True)
-    audio_duration = Column(Integer, nullable=True)  # Seconds
 
     # Generation metadata
     generated_at = Column(DateTime, nullable=True)

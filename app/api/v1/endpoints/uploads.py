@@ -345,7 +345,6 @@ async def get_audio_file_info(
         "filename": audio_file.filename,
         "file_size": audio_file.file_size,
         "mime_type": audio_file.mime_type,
-        "duration_seconds": audio_file.duration_seconds,
         "storage_type": audio_file.storage_type,
         "created_at": audio_file.created_at,
     }

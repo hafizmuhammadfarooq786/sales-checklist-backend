@@ -1,6 +1,9 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from datetime import date
+from typing import Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, distinct
+from sqlalchemy import and_, select, func, distinct
 from sqlalchemy.orm import selectinload
 
 from app.db.session import get_db
@@ -14,6 +17,7 @@ from app.schemas.user import (
     PipelineMetrics,
 )
 from app.api.dependencies import get_current_active_user, get_session_access_filter
+from app.core.dashboard_date import get_dashboard_date_range
 
 router = APIRouter()
 
@@ -101,6 +105,14 @@ async def get_current_user_organization(
 # Get current user's pipeline metrics
 @router.get("/me/metrics", response_model=PipelineMetrics)
 async def get_current_user_metrics(
+    start_date: Optional[date] = Query(
+        None,
+        description="Range start (UTC). Defaults to the first day of the current month.",
+    ),
+    end_date: Optional[date] = Query(
+        None,
+        description="Range end (UTC). Defaults to today.",
+    ),
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db)
 ):
@@ -119,11 +131,23 @@ async def get_current_user_metrics(
     - ADMIN: Metrics from all users in their organization
     """
     # Build role-based access filter
+    if start_date and end_date and start_date > end_date:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="start_date must be on or before end_date",
+        )
+
     access_filter = get_session_access_filter(current_user)
+    range_start, range_end, _, _ = get_dashboard_date_range(start_date, end_date)
+    dated_filter = and_(
+        access_filter,
+        Session.created_at >= range_start,
+        Session.created_at <= range_end,
+    )
 
     # Get total sessions count with RBAC filter
     total_result = await db.execute(
-        select(func.count(Session.id)).where(access_filter)
+        select(func.count(Session.id)).where(dated_filter)
     )
     total_sessions = total_result.scalar() or 0
 
@@ -137,7 +161,7 @@ async def get_current_user_metrics(
     ]
     active_result = await db.execute(
         select(func.count(Session.id)).where(
-            access_filter,
+            dated_filter,
             Session.status.in_(active_statuses)
         )
     )
@@ -146,7 +170,7 @@ async def get_current_user_metrics(
     # Get completed sessions count with RBAC filter
     completed_result = await db.execute(
         select(func.count(Session.id)).where(
-            access_filter,
+            dated_filter,
             Session.status == SessionStatus.COMPLETED
         )
     )
@@ -155,7 +179,7 @@ async def get_current_user_metrics(
     # Get total unique opportunities (count distinct opportunity_name where not null) with RBAC filter
     opportunities_result = await db.execute(
         select(func.count(distinct(Session.opportunity_name))).where(
-            access_filter,
+            dated_filter,
             Session.opportunity_name.isnot(None),
             Session.opportunity_name != ""
         )

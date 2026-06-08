@@ -655,6 +655,15 @@ async def email_report(
         # Send email with report link
         user_name = f"{current_user.first_name or ''} {current_user.last_name or ''}".strip() or current_user.email
 
+        # Generate a time-limited (1 hour) presigned download link so the
+        # recipient can actually retrieve the PDF from the email.
+        download_url = get_report_url(report)
+        download_line = (
+            f"Download your report (link valid for 1 hour):\n{download_url}"
+            if download_url
+            else "You can download your report from The Sales Checklist dashboard."
+        )
+
         message = f"""
 Your The Sales Checklist report for "{session.customer_name}" is ready!
 
@@ -662,7 +671,7 @@ Customer: {session.customer_name}
 Opportunity: {session.opportunity_name or 'N/A'}
 Generated: {report.generated_at.strftime('%Y-%m-%d %H:%M') if report.generated_at else 'N/A'}
 
-You can download your report from The Sales Checklist dashboard.
+{download_line}
 """
 
         email_sent = email_service.send_notification_email(
