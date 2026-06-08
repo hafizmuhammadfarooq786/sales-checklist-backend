@@ -682,7 +682,6 @@ async def update_checklist_item(
     # Update user answer
     response.user_answer = update_data.user_answer
     response.was_changed = (response.user_answer != response.ai_answer)
-    response.changed_at = datetime.utcnow() if response.was_changed else None
 
     # Recalculate score based on final answer
     final_answer = response.user_answer if response.user_answer is not None else response.ai_answer

@@ -22,7 +22,7 @@ class Settings(BaseSettings):
     DEBUG: bool = Field(default=False)
 
     # Security & JWT Authentication
-    SECRET_KEY: str = Field(default="d074749f546b8591db9a9b51798a373bedbce66b8e8e6dbc0e9dce48a167e8bf")
+    SECRET_KEY: str = Field(default="", description="JWT signing secret - MUST be set via environment variable")
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 7  # 7 days
     ALLOW_PUBLIC_SIGNUP: bool = Field(default=False)
@@ -37,8 +37,8 @@ class Settings(BaseSettings):
 
     # Database
     DATABASE_URL: str = Field(
-        default="postgresql+asyncpg://neondb_owner:npg_cnFle7kXxLd0@ep-lucky-breeze-a4i6m6jo-pooler.us-east-1.aws.neon.tech/neondb?ssl=require",
-        description="Database connection URL - should be set via environment variable"
+        default="",
+        description="Database connection URL - MUST be set via environment variable"
     )
     DB_ECHO: bool = Field(default=False)
 
@@ -57,10 +57,6 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: str = Field(default="")
     OPENAI_MODEL_WHISPER: str = "whisper-1"
     OPENAI_MODEL_GPT: str = "gpt-4-turbo-preview"
-
-    # ElevenLabs
-    ELEVENLABS_API_KEY: str = Field(default="")
-    ELEVENLABS_VOICE_ID: str = Field(default="")
 
     # Celery
     CELERY_BROKER_URL: str = Field(default="redis://localhost:6379/1")
@@ -110,11 +106,6 @@ class Settings(BaseSettings):
     SMTP_USE_TLS: bool = Field(default=True)
     SMTP_USE_SSL: bool = Field(default=False)
     SMTP_TIMEOUT_SECONDS: int = Field(default=30)
-
-    # Salesforce
-    SALESFORCE_CLIENT_ID: str = Field(default="")
-    SALESFORCE_CLIENT_SECRET: str = Field(default="")
-    SALESFORCE_REDIRECT_URI: str = Field(default="")
 
 
 settings = Settings()

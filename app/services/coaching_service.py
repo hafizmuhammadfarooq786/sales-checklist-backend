@@ -1,13 +1,11 @@
 """
 Coaching Feedback Service
 Generates personalized coaching feedback using hardcoded guidance text
-Now uses gap-based coaching: focuses only on items scoring 0/10
-Audio generation is disabled (code commented out but preserved)
+Uses gap-based coaching: focuses only on items scoring 0/10 (text-only).
 """
 from datetime import datetime
 from typing import Dict, Any, Optional, List
 import openai
-from elevenlabs import ElevenLabs
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
@@ -45,20 +43,11 @@ class CoachingService:
     """Service for generating AI-powered coaching feedback"""
 
     def __init__(self):
-        """Initialize OpenAI and ElevenLabs clients"""
+        """Initialize the OpenAI client"""
         if not settings.OPENAI_API_KEY:
             raise ValueError("OpenAI API key not configured")
 
         self.openai_client = openai.OpenAI(api_key=settings.OPENAI_API_KEY)
-
-        # Initialize ElevenLabs if configured
-        self.elevenlabs_client = None
-        if settings.ELEVENLABS_API_KEY and settings.ELEVENLABS_VOICE_ID:
-            try:
-                self.elevenlabs_client = ElevenLabs(api_key=settings.ELEVENLABS_API_KEY)
-                print(f"ElevenLabs client initialized with voice: {settings.ELEVENLABS_VOICE_ID}")
-            except Exception as e:
-                print(f"Warning: ElevenLabs initialization failed: {e}")
 
     async def fetch_gap_data(
         self,
@@ -192,97 +181,6 @@ class CoachingService:
         except Exception as e:
             print(f"Error generating coaching feedback: {e}")
             raise e
-
-    # AUDIO GENERATION DISABLED PER CLIENT REQUEST
-    # The client requested to comment out audio generation functionality
-    # Logic preserved for potential future use
-
-    # async def generate_coaching_audio(
-    #     self,
-    #     feedback_text: str,
-    #     session_id: int,
-    #     user_id: int
-    # ) -> Optional[Dict[str, Any]]:
-    #     """
-    #     Generate audio version of coaching feedback using ElevenLabs TTS
-    #
-    #     Args:
-    #         feedback_text: Text to convert to speech
-    #         session_id: Session ID for file naming
-    #         user_id: User ID for S3 path
-    #
-    #     Returns:
-    #         Dict with S3 URL and duration, or None if TTS unavailable
-    #     """
-    #     if not self.elevenlabs_client:
-    #         print("ElevenLabs not configured, skipping audio generation")
-    #         return None
-    #
-    #     try:
-    #         print(f"Generating coaching audio for session {session_id}")
-    #
-    #         # Generate audio using ElevenLabs
-    #         audio_generator = self.elevenlabs_client.text_to_speech.convert(
-    #             voice_id=settings.ELEVENLABS_VOICE_ID,
-    #             text=feedback_text,
-    #             model_id="eleven_multilingual_v2",
-    #             output_format="mp3_44100_128"
-    #         )
-    #
-    #         # Collect audio bytes from generator
-    #         audio_bytes = b"".join(audio_generator)
-    #
-    #         # Save to temporary file
-    #         temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
-    #         temp_file.write(audio_bytes)
-    #         temp_file.close()
-    #
-    #         # Calculate approximate duration (128kbps = 16KB/s)
-    #         duration_seconds = len(audio_bytes) / (128 * 1024 / 8)
-    #
-    #         # Upload to S3
-    #         s3_key = f"coaching/{user_id}/{session_id}/feedback_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.mp3"
-    #
-    #         try:
-    #             s3_service = get_s3_service()
-    #             s3_url = s3_service.upload_file(
-    #                 temp_file.name,
-    #                 s3_key,
-    #                 content_type="audio/mpeg",
-    #                 bucket_name=settings.S3_BUCKET_AUDIO
-    #             )
-    #             storage_type = "s3"
-    #         except Exception as s3_error:
-    #             print(f"S3 upload failed, using local storage: {s3_error}")
-    #             # Fall back to local storage
-    #             local_dir = f"uploads/coaching/{user_id}/{session_id}"
-    #             os.makedirs(local_dir, exist_ok=True)
-    #             local_path = f"{local_dir}/feedback_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.mp3"
-    #
-    #             import shutil
-    #             shutil.copy(temp_file.name, local_path)
-    #             s3_url = local_path
-    #             storage_type = "local"
-    #         finally:
-    #             # Clean up temp file
-    #             os.unlink(temp_file.name)
-    #
-    #         print(f"Coaching audio generated: {s3_url} ({int(duration_seconds)}s)")
-    #
-    #         return {
-    #             "audio_url": s3_url,
-    #             "s3_bucket": settings.S3_BUCKET_AUDIO if storage_type == "s3" else None,
-    #             "s3_key": s3_key if storage_type == "s3" else None,
-    #             "duration_seconds": int(duration_seconds),
-    #             "storage_type": storage_type
-    #         }
-    #
-    #     except ApiError as e:
-    #         print(f"ElevenLabs API error: {e}")
-    #         return None
-    #     except Exception as e:
-    #         print(f"Error generating coaching audio: {e}")
-    #         return None
 
     def _generate_gap_fallback_feedback(
         self,

@@ -60,39 +60,11 @@ async def register(
             detail="Email already registered"
         )
     
-    # Create new user
+    # Create new user. auth_service.create_user already sends the verification
+    # email (and rolls back on failure), so we do not send it again here.
     try:
-        user = await auth_service.create_user(db, user_data)
-        
-        # Send email verification email
-        if user.email_verification_token:
-            try:
-                user_name = f"{user.first_name or ''} {user.last_name or ''}".strip() or user.email
-                email_sent = email_service.send_verification_email(
-                    user_email=user.email,
-                    user_name=user_name,
-                    verification_token=user.email_verification_token
-                )
-                if email_sent:
-                    logger.info(f"Verification email sent to {user.email}")
-                else:
-                    await db.delete(user)
-                    await db.commit()
-                    raise HTTPException(
-                        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                        detail="Failed to send verification email. Please try again."
-                    )
-            except HTTPException:
-                raise
-            except Exception as email_error:
-                logger.error(f"Email service error: {str(email_error)}")
-                await db.delete(user)
-                await db.commit()
-                raise HTTPException(
-                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                    detail="Failed to send verification email. Please try again."
-                )
-        
+        await auth_service.create_user(db, user_data)
+
         return RegisterResponse(
             message="Registration successful. Please verify your email before logging in."
         )

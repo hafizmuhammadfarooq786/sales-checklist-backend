@@ -17,12 +17,18 @@ class TranscriptionService:
     """Service for transcribing audio files using OpenAI Whisper"""
 
     def __init__(self):
-        if not settings.OPENAI_API_KEY:
-            raise ValueError("OpenAI API key not configured")
-        
-        # Set OpenAI API key
-        openai.api_key = settings.OPENAI_API_KEY
-        self.client = openai.OpenAI(api_key=settings.OPENAI_API_KEY)
+        # Lazily initialize the OpenAI client so importing this module does not
+        # require OPENAI_API_KEY to be set at startup.
+        self._client = None
+
+    @property
+    def client(self) -> "openai.OpenAI":
+        if self._client is None:
+            if not settings.OPENAI_API_KEY:
+                raise ValueError("OpenAI API key not configured")
+            openai.api_key = settings.OPENAI_API_KEY
+            self._client = openai.OpenAI(api_key=settings.OPENAI_API_KEY)
+        return self._client
 
     async def transcribe_audio(
         self,
