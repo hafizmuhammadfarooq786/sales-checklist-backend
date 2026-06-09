@@ -18,7 +18,7 @@ from app.models.checklist import ChecklistItem, ChecklistCategory
 from app.api.dependencies import get_current_user
 from app.core.dashboard_date import get_dashboard_date_range
 from app.services.risk_band_service import (
-    GOOD_PERFORMANCE_MIN_SCORE,
+    AT_RISK_MAX_SCORE,
     HEALTHY_MIN_SCORE,
 )
 
@@ -235,7 +235,7 @@ async def get_dashboard_stats(
             and_(
                 Session.user_id.in_(team_member_ids),
                 Session.id == ScoringResult.session_id,
-                ScoringResult.total_score < GOOD_PERFORMANCE_MIN_SCORE
+                ScoringResult.total_score <= AT_RISK_MAX_SCORE
             )
         )
     )
@@ -261,7 +261,7 @@ async def get_dashboard_notifications(
     Returns:
     - Stalled deals (no activity for 30+ days)
     - At-risk deals (scores 0-30)
-    - High-scoring lost deals (70+ but lost/no decision)
+    - High-scoring lost deals (61+ but lost/no decision)
 
     **Permissions:**
     - MANAGER: Team notifications
@@ -311,7 +311,7 @@ async def get_dashboard_notifications(
             and_(
                 Session.user_id.in_(team_member_ids),
                 Session.id == ScoringResult.session_id,
-                ScoringResult.total_score < GOOD_PERFORMANCE_MIN_SCORE,
+                ScoringResult.total_score <= AT_RISK_MAX_SCORE,
                 Session.user_id == User.id
             )
         ).order_by(ScoringResult.total_score.asc())
@@ -764,7 +764,7 @@ async def get_dashboard_overview(
             and_(
                 Session.user_id.in_(team_member_ids),
                 Session.id == ScoringResult.session_id,
-                ScoringResult.total_score < GOOD_PERFORMANCE_MIN_SCORE,
+                ScoringResult.total_score <= AT_RISK_MAX_SCORE,
                 as_of_session_filter,
             )
         )
@@ -817,7 +817,7 @@ async def get_dashboard_overview(
             and_(
                 Session.user_id.in_(team_member_ids),
                 Session.id == ScoringResult.session_id,
-                ScoringResult.total_score < GOOD_PERFORMANCE_MIN_SCORE,
+                ScoringResult.total_score <= AT_RISK_MAX_SCORE,
                 Session.user_id == User.id,
                 as_of_session_filter,
             )

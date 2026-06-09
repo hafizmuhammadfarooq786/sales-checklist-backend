@@ -10,9 +10,9 @@ from app.models.base import Base, TimestampMixin
 
 class RiskBand(str, enum.Enum):
     """Risk assessment bands"""
-    GREEN = "green"  # Healthy: 70+
-    YELLOW = "yellow"  # Good performance: 50-69
-    RED = "red"  # At risk: < 50
+    GREEN = "green"  # Excellent: 61-100
+    YELLOW = "yellow"  # Good: 31-60
+    RED = "red"  # At risk: 0-30
 
 
 class ScoringResult(Base, TimestampMixin):
