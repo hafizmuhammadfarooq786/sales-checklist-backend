@@ -1,0 +1,156 @@
+name: Deploy Backend — Staging
+
+on:
+  push:
+    branches:
+      - develop
+  workflow_dispatch:
+
+concurrency:
+  group: backend-stage
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: us-east-2
+
+jobs:
+  deploy:
+    name: Deploy Backend to Staging
+    runs-on: ubuntu-latest
+    environment: staging
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build, tag, and push image
+        id: build-image
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build --platform linux/amd64 \
+            -t "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" \
+            -t "$ECR_REGISTRY/$ECR_REPOSITORY:latest" \
+            .
+          docker push "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+          docker push "$ECR_REGISTRY/$ECR_REPOSITORY:latest"
+          echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Run database migrations (ECS one-off task)
+        env:
+          ECS_CLUSTER: ${{ vars.ECS_CLUSTER }}
+          ECS_TASK_DEFINITION: ${{ vars.ECS_TASK_DEFINITION }}
+          CONTAINER_NAME: ${{ vars.CONTAINER_NAME }}
+          ECS_SUBNETS: ${{ vars.ECS_SUBNETS }}
+          ECS_SECURITY_GROUP: ${{ vars.ECS_SECURITY_GROUP }}
+        run: |
+          TASK_ARN=$(aws ecs run-task \
+            --cluster "$ECS_CLUSTER" \
+            --task-definition "$ECS_TASK_DEFINITION" \
+            --launch-type FARGATE \
+            --network-configuration "awsvpcConfiguration={subnets=[$ECS_SUBNETS],securityGroups=[$ECS_SECURITY_GROUP],assignPublicIp=ENABLED}" \
+            --overrides "{\"containerOverrides\":[{\"name\":\"$CONTAINER_NAME\",\"command\":[\"alembic\",\"upgrade\",\"head\"]}]}" \
+            --query 'tasks[0].taskArn' --output text)
+
+          aws ecs wait tasks-stopped --cluster "$ECS_CLUSTER" --tasks "$TASK_ARN"
+          EXIT_CODE=$(aws ecs describe-tasks --cluster "$ECS_CLUSTER" --tasks "$TASK_ARN" \
+            --query 'tasks[0].containers[0].exitCode' --output text)
+          if [ "$EXIT_CODE" != "0" ]; then exit 1; fi
+
+      - name: Download current backend task definition
+        run: |
+          aws ecs describe-task-definition \
+            --task-definition "${{ vars.ECS_TASK_DEFINITION }}" \
+            --query taskDefinition > task-definition.json
+
+      - name: Render backend task definition with new image
+        id: task-def
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: task-definition.json
+          container-name: ${{ vars.CONTAINER_NAME }}
+          image: ${{ steps.build-image.outputs.image }}
+
+      - name: Register backend task definition
+        id: register-backend
+        run: |
+          ARN=$(aws ecs register-task-definition \
+            --cli-input-json file://${{ steps.task-def.outputs.task-definition }} \
+            --query 'taskDefinition.taskDefinitionArn' --output text)
+          echo "arn=$ARN" >> "$GITHUB_OUTPUT"
+
+      - name: CodeDeploy blue/green — backend API
+        env:
+          TASK_DEF_ARN: ${{ steps.register-backend.outputs.arn }}
+        run: |
+          cat > appspec.yaml <<EOF
+          version: 0.0
+          Resources:
+            - TargetService:
+                Type: AWS::ECS::Service
+                Properties:
+                  TaskDefinition: ${TASK_DEF_ARN}
+                  LoadBalancerInfo:
+                    ContainerName: ${{ vars.CONTAINER_NAME }}
+                    ContainerPort: ${{ vars.CODEDEPLOY_CONTAINER_PORT }}
+          EOF
+          DEPLOYMENT_ID=$(aws deploy create-deployment \
+            --application-name "${{ vars.CODEDEPLOY_APPLICATION }}" \
+            --deployment-group-name "${{ vars.CODEDEPLOY_DEPLOYMENT_GROUP }}" \
+            --revision "revisionType=AppSpecContent,appSpecContent={content=\"$(cat appspec.yaml)\"}" \
+            --query deploymentId --output text)
+          aws deploy wait deployment-successful --deployment-id "$DEPLOYMENT_ID"
+
+      - name: Deploy Celery worker (ECS rolling)
+        env:
+          WORKER_TASK_DEFINITION: ${{ vars.ECS_WORKER_TASK_DEFINITION }}
+        run: |
+          aws ecs describe-task-definition \
+            --task-definition "$WORKER_TASK_DEFINITION" \
+            --query taskDefinition > worker-task-definition.json
+          IMAGE="${{ steps.build-image.outputs.image }}"
+          CONTAINER="${{ vars.CONTAINER_NAME }}"
+          python3 - <<'PY' "$IMAGE"
+          import json, sys
+          img = sys.argv[1]
+          td = json.load(open("worker-task-definition.json"))
+          for c in td["containerDefinitions"]:
+              if c["name"] == "sales-checklist-backend":
+                  c["image"] = img
+          json.dump(td, open("worker-task-out.json", "w"))
+          PY
+          WORKER_ARN=$(aws ecs register-task-definition \
+            --cli-input-json file://worker-task-out.json \
+            --query 'taskDefinition.taskDefinitionArn' --output text)
+          aws ecs update-service \
+            --cluster "${{ vars.ECS_CLUSTER }}" \
+            --service "${{ vars.ECS_WORKER_SERVICE }}" \
+            --task-definition "$WORKER_ARN" \
+            --force-new-deployment
+          aws ecs wait services-stable \
+            --cluster "${{ vars.ECS_CLUSTER }}" \
+            --services "${{ vars.ECS_WORKER_SERVICE }}"
+
+      - name: Verify deployment
+        env:
+          HEALTH_CHECK_URL: ${{ vars.HEALTH_CHECK_URL }}
+        run: |
+          for i in 1 2 3 4 5; do
+            response=$(curl -s -o /dev/null -w "%{http_code}" "$HEALTH_CHECK_URL" || true)
+            if [ "$response" = "200" ]; then exit 0; fi
+            sleep 15
+          done
+          exit 1
