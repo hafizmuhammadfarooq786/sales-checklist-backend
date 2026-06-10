@@ -181,8 +181,8 @@ async def upload_audio_file(
             file_size = os.path.getsize(temp_file_path)
             logger.info(f"File size: {file_size} bytes")
 
-            # Upload to S3 if enabled, otherwise use local storage
-            if settings.AWS_S3_BUCKET_NAME and settings.AWS_ACCESS_KEY_ID:
+            # Upload to S3 on ECS/staging (task IAM role) or when static AWS keys are set
+            if settings.s3_audio_bucket:
                 try:
                     s3_service = get_s3_service()
                     s3_url = await run_in_threadpool(

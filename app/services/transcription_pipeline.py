@@ -8,13 +8,13 @@ import os
 from io import BytesIO
 from urllib.parse import urlparse
 
-import boto3
 from fastapi.concurrency import run_in_threadpool
 from sqlalchemy import delete
 
 from app.core.config import settings
 from app.db.session import get_db_session
 from app.models.session import Session, SessionResponse, SessionStatus, Transcript
+from app.services.aws_clients import s3_client
 from app.services.checklist_analyzer import analyzer
 from app.services.transcription_service import transcription_service
 
@@ -40,7 +40,7 @@ async def run_transcription_job(session_id: int, file_path: str) -> None:
             parsed_url = urlparse(file_path)
             s3_key = parsed_url.path.lstrip("/")
             if parsed_url.hostname and not parsed_url.hostname.startswith(
-                settings.AWS_S3_BUCKET_NAME
+                settings.s3_audio_bucket
             ):
                 parts = s3_key.split("/", 1)
                 if len(parts) > 1:
@@ -48,17 +48,12 @@ async def run_transcription_job(session_id: int, file_path: str) -> None:
 
             logger.info("Extracted S3 key: %s", s3_key)
 
-            s3_client = boto3.client(
-                "s3",
-                aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
-                aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
-                region_name=settings.AWS_REGION,
-            )
+            client = s3_client()
 
             file_buffer = BytesIO()
             await run_in_threadpool(
-                s3_client.download_fileobj,
-                settings.AWS_S3_BUCKET_NAME,
+                client.download_fileobj,
+                settings.s3_audio_bucket,
                 s3_key,
                 file_buffer,
             )

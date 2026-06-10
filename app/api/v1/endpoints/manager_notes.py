@@ -257,7 +257,7 @@ async def create_audio_manager_note(
                 logger.info(f"Temporary file created for manager note: {temp_file_path}")
 
             # Upload to S3 if enabled
-            if settings.AWS_S3_BUCKET_NAME and settings.AWS_ACCESS_KEY_ID:
+            if settings.s3_audio_bucket:
                 try:
                     s3_service = get_s3_service()
                     s3_url = s3_service.upload_file(
@@ -308,7 +308,7 @@ async def create_audio_manager_note(
             note_type=NoteType.AUDIO,
             note_text=None,  # No text for audio notes
             is_edited=False,
-            audio_s3_bucket=settings.AWS_S3_BUCKET_NAME if storage_type == "s3" else None,
+            audio_s3_bucket=settings.s3_audio_bucket if storage_type == "s3" else None,
             audio_s3_key=s3_key if storage_type == "s3" else s3_url,  # S3 key or local path
             audio_file_size=file_size,
             audio_duration=duration  # Duration from frontend

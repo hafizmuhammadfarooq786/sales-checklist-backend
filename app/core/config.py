@@ -49,9 +49,14 @@ class Settings(BaseSettings):
     AWS_REGION: str = Field(default="us-east-2")
     AWS_ACCESS_KEY_ID: str = Field(default="")
     AWS_SECRET_ACCESS_KEY: str = Field(default="")
-    AWS_S3_BUCKET_NAME: str = Field(default="sales-checklist")
+    AWS_S3_BUCKET_NAME: str = Field(default="")
     S3_BUCKET_AUDIO: str = Field(default="sales-checklist-audio")
     S3_BUCKET_REPORTS: str = Field(default="sales-checklist-reports")
+
+    @property
+    def s3_audio_bucket(self) -> str:
+        """Primary bucket for session audio uploads (ECS: set S3_BUCKET_AUDIO)."""
+        return self.AWS_S3_BUCKET_NAME or self.S3_BUCKET_AUDIO
 
     # OpenAI
     OPENAI_API_KEY: str = Field(default="")
