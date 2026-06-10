@@ -194,12 +194,17 @@ jobs:
             --query taskDefinition > worker-task-definition.json
           IMAGE="${{ steps.build-image.outputs.image }}"
           CONTAINER="${{ vars.CONTAINER_NAME }}"
-          python3 - <<'PY' "$IMAGE"
-          import json, sys
-          img = sys.argv[1]
+          python3 - <<'PY' "$IMAGE" "$CONTAINER"
+          import json, os, sys
+          img, container = sys.argv[1], sys.argv[2]
           td = json.load(open("worker-task-definition.json"))
+          for key in (
+              "taskDefinitionArn", "revision", "status", "requiresAttributes",
+              "compatibilities", "registeredAt", "registeredBy", "deregisteredAt",
+          ):
+              td.pop(key, None)
           for c in td["containerDefinitions"]:
-              if c["name"] == "sales-checklist-backend":
+              if c["name"] == container:
                   c["image"] = img
           json.dump(td, open("worker-task-out.json", "w"))
           PY
