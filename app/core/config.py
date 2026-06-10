@@ -61,7 +61,7 @@ class Settings(BaseSettings):
     # OpenAI
     OPENAI_API_KEY: str = Field(default="")
     OPENAI_MODEL_WHISPER: str = "whisper-1"
-    OPENAI_MODEL_GPT: str = "gpt-4-turbo-preview"
+    OPENAI_MODEL_GPT: str = "gpt-4o"
 
     # Celery
     CELERY_BROKER_URL: str = Field(default="redis://localhost:6379/1")

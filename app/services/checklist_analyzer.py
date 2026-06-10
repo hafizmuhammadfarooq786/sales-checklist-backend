@@ -30,8 +30,7 @@ class ChecklistAnalyzer:
 
     def __init__(self):
         self.client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
-        # Use gpt-4o or gpt-4-turbo (latest models with better JSON mode support)
-        self.model = "gpt-4o"  # Faster and cheaper than gpt-4-turbo-preview
+        self.model = settings.OPENAI_MODEL_GPT
 
     async def get_checklist_items(self, db: AsyncSession) -> List[ChecklistItem]:
         """Fetch all 10 active checklist items with their categories"""
