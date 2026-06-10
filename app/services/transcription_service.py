@@ -9,6 +9,7 @@ import logging
 from fastapi.concurrency import run_in_threadpool
 
 from app.core.config import settings
+from app.services.openai_compat import chat_completion_kwargs
 
 logger = logging.getLogger(__name__)
 
@@ -150,8 +151,11 @@ TRANSCRIPT:
                     {"role": "system", "content": "You are an expert sales coach and analyst."},
                     {"role": "user", "content": prompt}
                 ],
-                temperature=0.1,
-                max_tokens=2000
+                **chat_completion_kwargs(
+                    settings.OPENAI_MODEL_GPT,
+                    max_output_tokens=2000,
+                    temperature=0.1,
+                ),
             )
 
             # Parse the response

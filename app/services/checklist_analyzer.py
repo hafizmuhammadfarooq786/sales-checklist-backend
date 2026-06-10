@@ -23,6 +23,7 @@ from sqlalchemy import select
 from app.core.config import settings
 from app.models.checklist import ChecklistItem, ChecklistCategory
 from app.models.checklist_behaviour import ChecklistItemBehaviour, SessionResponseAnalysis
+from app.services.openai_compat import chat_completion_kwargs
 
 
 class ChecklistAnalyzer:
@@ -412,8 +413,11 @@ Return ONLY valid JSON, no additional text:
                         "content": prompt
                     }
                 ],
-                temperature=0.3,  # Lower temperature for more consistent, objective responses
-                max_tokens=8000,  # Large enough for 10 items with detailed question evaluations (~700 tokens/item)
+                **chat_completion_kwargs(
+                    self.model,
+                    max_output_tokens=8000,
+                    temperature=0.3,
+                ),
                 response_format={"type": "json_object"}  # Ensure JSON output
             )
 
@@ -460,8 +464,11 @@ CRITICAL REQUIREMENTS:
                                 "content": fix_prompt
                             }
                         ],
-                        temperature=0.1,
-                        max_tokens=4000,
+                        **chat_completion_kwargs(
+                            self.model,
+                            max_output_tokens=4000,
+                            temperature=0.1,
+                        ),
                         response_format={"type": "json_object"}
                     )
                     
