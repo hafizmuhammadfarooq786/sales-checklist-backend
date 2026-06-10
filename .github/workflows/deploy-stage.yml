@@ -96,7 +96,7 @@ jobs:
           print(json.dumps({
               "containerOverrides": [{
                   "name": os.environ["CONTAINER_NAME"],
-                  "command": ["alembic", "upgrade", "head"],
+                  "command": ["python", "scripts/migrate.py"],
               }]
           }))
           PY
