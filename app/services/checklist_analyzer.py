@@ -23,6 +23,7 @@ from sqlalchemy import select
 from app.core.config import settings
 from app.models.checklist import ChecklistItem, ChecklistCategory
 from app.models.checklist_behaviour import ChecklistItemBehaviour, SessionResponseAnalysis
+from app.services.openai_compat import chat_completion_kwargs
 
 
 class ChecklistAnalyzer:
@@ -30,8 +31,7 @@ class ChecklistAnalyzer:
 
     def __init__(self):
         self.client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
-        # Use gpt-4o or gpt-4-turbo (latest models with better JSON mode support)
-        self.model = "gpt-4o"  # Faster and cheaper than gpt-4-turbo-preview
+        self.model = settings.OPENAI_MODEL_GPT
 
     async def get_checklist_items(self, db: AsyncSession) -> List[ChecklistItem]:
         """Fetch all 10 active checklist items with their categories"""
@@ -413,8 +413,11 @@ Return ONLY valid JSON, no additional text:
                         "content": prompt
                     }
                 ],
-                temperature=0.3,  # Lower temperature for more consistent, objective responses
-                max_tokens=8000,  # Large enough for 10 items with detailed question evaluations (~700 tokens/item)
+                **chat_completion_kwargs(
+                    self.model,
+                    max_output_tokens=8000,
+                    temperature=0.3,
+                ),
                 response_format={"type": "json_object"}  # Ensure JSON output
             )
 
@@ -461,8 +464,11 @@ CRITICAL REQUIREMENTS:
                                 "content": fix_prompt
                             }
                         ],
-                        temperature=0.1,
-                        max_tokens=4000,
+                        **chat_completion_kwargs(
+                            self.model,
+                            max_output_tokens=4000,
+                            temperature=0.1,
+                        ),
                         response_format={"type": "json_object"}
                     )
                     

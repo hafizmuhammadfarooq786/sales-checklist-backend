@@ -92,6 +92,7 @@ class UserLogin(BaseModel):
     """Schema for user login"""
     email: EmailStr
     password: str
+    remember_me: bool = False
 
 
 class Token(BaseModel):

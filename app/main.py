@@ -132,6 +132,16 @@ async def health_check():
     }
 
 
+@app.get(f"{settings.API_V1_STR}/health")
+async def api_v1_health_check():
+    """Health check under /api/v1 for ALB path-based routing."""
+    return {
+        "status": "healthy",
+        "service": "sales-checklist-api",
+        "version": "1.0.0"
+    }
+
+
 @app.get("/")
 async def root():
     """Root endpoint."""

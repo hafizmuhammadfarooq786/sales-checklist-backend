@@ -168,15 +168,23 @@ class AuthService:
         await db.refresh(user)
         return user
 
-    async def create_token_response(self, user: User) -> Token:
+    async def create_token_response(
+        self, user: User, remember_me: bool = False
+    ) -> Token:
         """
         Create a complete token response with user data.
 
         All user fields are already loaded via eager loading in authenticate_user,
         so this method doesn't trigger additional database queries.
         """
+        if remember_me:
+            expires_delta = timedelta(days=settings.REMEMBER_ME_TOKEN_EXPIRE_DAYS)
+        else:
+            expires_delta = timedelta(minutes=settings.SESSION_TOKEN_EXPIRE_MINUTES)
+
         access_token = self.create_access_token(
-            data={"sub": str(user.id), "email": user.email, "role": user.role.value}
+            data={"sub": str(user.id), "email": user.email, "role": user.role.value},
+            expires_delta=expires_delta,
         )
 
         user_response = UserResponse(
@@ -198,7 +206,7 @@ class AuthService:
         return Token(
             access_token=access_token,
             token_type="bearer",
-            expires_in=self.access_token_expire_minutes * 60,
+            expires_in=int(expires_delta.total_seconds()),
             user=user_response,
         )
 

@@ -101,7 +101,9 @@ async def login(
             headers={"WWW-Authenticate": "Bearer"},
         )
     
-    token_response = await auth_service.create_token_response(user)
+    token_response = await auth_service.create_token_response(
+        user, remember_me=user_credentials.remember_me
+    )
     return token_response
 
 

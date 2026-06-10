@@ -24,7 +24,9 @@ class Settings(BaseSettings):
     # Security & JWT Authentication
     SECRET_KEY: str = Field(default="", description="JWT signing secret - MUST be set via environment variable")
     ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 7  # 7 days
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 7  # Default fallback (7 days)
+    SESSION_TOKEN_EXPIRE_MINUTES: int = 60 * 8  # Standard login without remember-me
+    REMEMBER_ME_TOKEN_EXPIRE_DAYS: int = 30
     ALLOW_PUBLIC_SIGNUP: bool = Field(default=False)
     INTERNAL_ADMIN_API_KEY: str = Field(default="")
     
@@ -49,14 +51,19 @@ class Settings(BaseSettings):
     AWS_REGION: str = Field(default="us-east-2")
     AWS_ACCESS_KEY_ID: str = Field(default="")
     AWS_SECRET_ACCESS_KEY: str = Field(default="")
-    AWS_S3_BUCKET_NAME: str = Field(default="sales-checklist")
+    AWS_S3_BUCKET_NAME: str = Field(default="")
     S3_BUCKET_AUDIO: str = Field(default="sales-checklist-audio")
     S3_BUCKET_REPORTS: str = Field(default="sales-checklist-reports")
+
+    @property
+    def s3_audio_bucket(self) -> str:
+        """Primary bucket for session audio uploads (ECS: set S3_BUCKET_AUDIO)."""
+        return self.AWS_S3_BUCKET_NAME or self.S3_BUCKET_AUDIO
 
     # OpenAI
     OPENAI_API_KEY: str = Field(default="")
     OPENAI_MODEL_WHISPER: str = "whisper-1"
-    OPENAI_MODEL_GPT: str = "gpt-4-turbo-preview"
+    OPENAI_MODEL_GPT: str = "gpt-4o"
 
     # Celery
     CELERY_BROKER_URL: str = Field(default="redis://localhost:6379/1")
