@@ -24,7 +24,9 @@ class Settings(BaseSettings):
     # Security & JWT Authentication
     SECRET_KEY: str = Field(default="", description="JWT signing secret - MUST be set via environment variable")
     ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 7  # 7 days
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 7  # Default fallback (7 days)
+    SESSION_TOKEN_EXPIRE_MINUTES: int = 60 * 8  # Standard login without remember-me
+    REMEMBER_ME_TOKEN_EXPIRE_DAYS: int = 30
     ALLOW_PUBLIC_SIGNUP: bool = Field(default=False)
     INTERNAL_ADMIN_API_KEY: str = Field(default="")
     
