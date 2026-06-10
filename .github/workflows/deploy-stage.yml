@@ -169,6 +169,22 @@ jobs:
             --query deploymentId --output text)
           aws deploy wait deployment-successful --deployment-id "$DEPLOYMENT_ID"
 
+      - name: Sync HTTPS API rule to active target group
+        run: |
+          ALB_ARN=$(aws elbv2 describe-load-balancers --names "${{ vars.CODEDEPLOY_APPLICATION }}-alb" \
+            --query 'LoadBalancers[0].LoadBalancerArn' --output text)
+          LISTENER_443=$(aws elbv2 describe-listeners --load-balancer-arn "$ALB_ARN" \
+            --query "Listeners[?Port==\`443\`].ListenerArn | [0]" --output text)
+          LISTENER_8080=$(aws elbv2 describe-listeners --load-balancer-arn "$ALB_ARN" \
+            --query "Listeners[?Port==\`8080\`].ListenerArn | [0]" --output text)
+          API_RULE=$(aws elbv2 describe-rules --listener-arn "$LISTENER_443" \
+            --query "Rules[?Priority=='10'].RuleArn | [0]" --output text)
+          ACTIVE_TG=$(aws elbv2 describe-listeners --listener-arns "$LISTENER_8080" \
+            --query 'Listeners[0].DefaultActions[0].TargetGroupArn' --output text)
+          echo "Syncing $API_RULE -> $ACTIVE_TG"
+          aws elbv2 modify-rule --rule-arn "$API_RULE" \
+            --actions "Type=forward,TargetGroupArn=$ACTIVE_TG"
+
       - name: Deploy Celery worker (ECS rolling)
         env:
           WORKER_TASK_DEFINITION: ${{ vars.ECS_WORKER_TASK_DEFINITION }}
