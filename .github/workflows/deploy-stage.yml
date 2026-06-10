@@ -56,19 +56,76 @@ jobs:
           CONTAINER_NAME: ${{ vars.CONTAINER_NAME }}
           ECS_SUBNETS: ${{ vars.ECS_SUBNETS }}
           ECS_SECURITY_GROUP: ${{ vars.ECS_SECURITY_GROUP }}
+          MIGRATION_IMAGE: ${{ steps.build-image.outputs.image }}
         run: |
-          TASK_ARN=$(aws ecs run-task \
+          NETWORK_CONFIG=$(python3 - <<'PY'
+          import json, os
+          subnets = [s.strip() for s in os.environ["ECS_SUBNETS"].split(",") if s.strip()]
+          print(json.dumps({
+              "awsvpcConfiguration": {
+                  "subnets": subnets,
+                  "securityGroups": [os.environ["ECS_SECURITY_GROUP"]],
+                  "assignPublicIp": "ENABLED",
+              }
+          }))
+          PY
+          )
+          OVERRIDES=$(python3 - <<'PY'
+          import json, os
+          print(json.dumps({
+              "containerOverrides": [{
+                  "name": os.environ["CONTAINER_NAME"],
+                  "command": ["alembic", "upgrade", "head"],
+                  "image": os.environ["MIGRATION_IMAGE"],
+              }]
+          }))
+          PY
+          )
+
+          RUN_OUTPUT=$(aws ecs run-task \
             --cluster "$ECS_CLUSTER" \
             --task-definition "$ECS_TASK_DEFINITION" \
             --launch-type FARGATE \
-            --network-configuration "awsvpcConfiguration={subnets=[$ECS_SUBNETS],securityGroups=[$ECS_SECURITY_GROUP],assignPublicIp=ENABLED}" \
-            --overrides "{\"containerOverrides\":[{\"name\":\"$CONTAINER_NAME\",\"command\":[\"alembic\",\"upgrade\",\"head\"]}]}" \
-            --query 'tasks[0].taskArn' --output text)
+            --network-configuration "$NETWORK_CONFIG" \
+            --overrides "$OVERRIDES" \
+            --output json)
+
+          FAILURES=$(echo "$RUN_OUTPUT" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(len(d.get("failures", [])))')
+          if [ "$FAILURES" != "0" ]; then
+            echo "ECS run-task failures:"
+            echo "$RUN_OUTPUT" | python3 -m json.tool
+            exit 1
+          fi
+
+          TASK_ARN=$(echo "$RUN_OUTPUT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["tasks"][0]["taskArn"])')
+          echo "Migration task: $TASK_ARN"
 
           aws ecs wait tasks-stopped --cluster "$ECS_CLUSTER" --tasks "$TASK_ARN"
-          EXIT_CODE=$(aws ecs describe-tasks --cluster "$ECS_CLUSTER" --tasks "$TASK_ARN" \
-            --query 'tasks[0].containers[0].exitCode' --output text)
-          if [ "$EXIT_CODE" != "0" ]; then exit 1; fi
+
+          TASK_JSON=$(aws ecs describe-tasks --cluster "$ECS_CLUSTER" --tasks "$TASK_ARN" --output json)
+          EXIT_CODE=$(echo "$TASK_JSON" | python3 -c 'import json,sys; t=json.load(sys.stdin)["tasks"][0]; c=t["containers"][0]; print(c.get("exitCode","null"))')
+          STOP_REASON=$(echo "$TASK_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["tasks"][0].get("stoppedReason",""))')
+          CONTAINER_REASON=$(echo "$TASK_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["tasks"][0]["containers"][0].get("reason",""))')
+
+          echo "Exit code: $EXIT_CODE"
+          echo "Stopped reason: $STOP_REASON"
+          echo "Container reason: $CONTAINER_REASON"
+
+          if [ "$EXIT_CODE" != "0" ]; then
+            LOG_GROUP=$(aws ecs describe-task-definition \
+              --task-definition "$ECS_TASK_DEFINITION" \
+              --query 'taskDefinition.containerDefinitions[?name==`'"$CONTAINER_NAME"'`].logConfiguration.options."awslogs-group"' \
+              --output text)
+            if [ -n "$LOG_GROUP" ] && [ "$LOG_GROUP" != "None" ]; then
+              echo "Recent migration logs from $LOG_GROUP:"
+              aws logs filter-log-events \
+                --log-group-name "$LOG_GROUP" \
+                --limit 50 \
+                --query 'events[*].message' \
+                --output text || true
+            fi
+            exit 1
+          fi
 
       - name: Download current backend task definition
         run: |
