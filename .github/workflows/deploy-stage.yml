@@ -49,14 +49,35 @@ jobs:
           docker push "$ECR_REGISTRY/$ECR_REPOSITORY:latest"
           echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> "$GITHUB_OUTPUT"
 
+      - name: Download current backend task definition
+        run: |
+          aws ecs describe-task-definition \
+            --task-definition "${{ vars.ECS_TASK_DEFINITION }}" \
+            --query taskDefinition > task-definition.json
+
+      - name: Render backend task definition with new image
+        id: task-def
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: task-definition.json
+          container-name: ${{ vars.CONTAINER_NAME }}
+          image: ${{ steps.build-image.outputs.image }}
+
+      - name: Register backend task definition
+        id: register-backend
+        run: |
+          ARN=$(aws ecs register-task-definition \
+            --cli-input-json file://${{ steps.task-def.outputs.task-definition }} \
+            --query 'taskDefinition.taskDefinitionArn' --output text)
+          echo "arn=$ARN" >> "$GITHUB_OUTPUT"
+
       - name: Run database migrations (ECS one-off task)
         env:
           ECS_CLUSTER: ${{ vars.ECS_CLUSTER }}
-          ECS_TASK_DEFINITION: ${{ vars.ECS_TASK_DEFINITION }}
+          ECS_TASK_DEFINITION: ${{ steps.register-backend.outputs.arn }}
           CONTAINER_NAME: ${{ vars.CONTAINER_NAME }}
           ECS_SUBNETS: ${{ vars.ECS_SUBNETS }}
           ECS_SECURITY_GROUP: ${{ vars.ECS_SECURITY_GROUP }}
-          MIGRATION_IMAGE: ${{ steps.build-image.outputs.image }}
         run: |
           NETWORK_CONFIG=$(python3 - <<'PY'
           import json, os
@@ -76,7 +97,6 @@ jobs:
               "containerOverrides": [{
                   "name": os.environ["CONTAINER_NAME"],
                   "command": ["alembic", "upgrade", "head"],
-                  "image": os.environ["MIGRATION_IMAGE"],
               }]
           }))
           PY
@@ -126,28 +146,6 @@ jobs:
             fi
             exit 1
           fi
-
-      - name: Download current backend task definition
-        run: |
-          aws ecs describe-task-definition \
-            --task-definition "${{ vars.ECS_TASK_DEFINITION }}" \
-            --query taskDefinition > task-definition.json
-
-      - name: Render backend task definition with new image
-        id: task-def
-        uses: aws-actions/amazon-ecs-render-task-definition@v1
-        with:
-          task-definition: task-definition.json
-          container-name: ${{ vars.CONTAINER_NAME }}
-          image: ${{ steps.build-image.outputs.image }}
-
-      - name: Register backend task definition
-        id: register-backend
-        run: |
-          ARN=$(aws ecs register-task-definition \
-            --cli-input-json file://${{ steps.task-def.outputs.task-definition }} \
-            --query 'taskDefinition.taskDefinitionArn' --output text)
-          echo "arn=$ARN" >> "$GITHUB_OUTPUT"
 
       - name: CodeDeploy blue/green — backend API
         env:
