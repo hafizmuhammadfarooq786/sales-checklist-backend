@@ -28,6 +28,12 @@ class OrganizationSettings(Base, TimestampMixin):
     logo_url = Column(Text, nullable=True)
     primary_color = Column(String(7), nullable=True)  # Hex color code
 
+    # Executive sponsor (client onboarding form)
+    executive_sponsor_name = Column(String(255), nullable=True)
+    executive_sponsor_email = Column(String(255), nullable=True)
+    executive_sponsor_direct_dial = Column(String(50), nullable=True)
+    executive_sponsor_cell_phone = Column(String(50), nullable=True)
+
     # Flexible settings storage (JSONB)
     settings = Column(JSONB, nullable=True, default={})
 

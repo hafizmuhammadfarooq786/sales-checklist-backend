@@ -3,7 +3,9 @@ Admin API Endpoints - SYSTEM_ADMIN only
 Handles organization and user management across all organizations
 """
 import secrets
+import base64
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Header
+from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, or_
 from sqlalchemy.orm import selectinload
@@ -11,15 +13,27 @@ from typing import List, Optional
 
 from app.db.session import get_db
 from app.models import Organization, User, Team, OrganizationSettings
+from app.models.organization_registration import (
+    OrganizationRegistrationRequest,
+    RegistrationStatus,
+)
 from app.models.user import UserRole
 from app.schemas.organization import (
     OrganizationCreate,
     OrganizationUpdate,
     OrganizationResponse,
 )
+from app.schemas.organization_registration import (
+    OrganizationRegistrationApproveResponse,
+    OrganizationRegistrationReject,
+    OrganizationRegistrationResponse,
+    SignupUserRowResponse,
+)
 from app.schemas.user import UserResponse, UserUpdate, AdminUserProvision
 from app.api.dependencies import require_roles
 from app.services.auth_service import auth_service
+from app.services.org_logo_service import guess_logo_content_type, load_organization_logo_bytes
+from app.services.registration_service import get_registration_service
 from app.core.config import settings
 
 router = APIRouter()
@@ -519,3 +533,188 @@ async def get_system_stats(
         "active_users": active_users,
         "total_teams": total_teams
     }
+
+
+# ==================== ORGANIZATION REGISTRATIONS ====================
+
+
+async def _registration_logo_preview(
+    request: OrganizationRegistrationRequest,
+) -> tuple[Optional[str], Optional[str]]:
+    if not request.logo_url:
+        return None, None
+    logo_bytes = await load_organization_logo_bytes(request.logo_url)
+    if not logo_bytes:
+        return None, None
+    return (
+        base64.b64encode(logo_bytes).decode("ascii"),
+        guess_logo_content_type(request.logo_url),
+    )
+
+
+def _registration_to_response(
+    request: OrganizationRegistrationRequest,
+    *,
+    logo_preview_base64: Optional[str] = None,
+    logo_content_type: Optional[str] = None,
+) -> OrganizationRegistrationResponse:
+    additional_users = [
+        SignupUserRowResponse.model_validate(row)
+        for row in (request.additional_users or [])
+    ]
+    return OrganizationRegistrationResponse(
+        id=request.id,
+        status=request.status,
+        company_name=request.company_name,
+        industry=request.industry,
+        logo_url=request.logo_url,
+        logo_preview_base64=logo_preview_base64,
+        logo_content_type=logo_content_type,
+        admin_first_name=request.admin_first_name,
+        admin_last_name=request.admin_last_name,
+        admin_email=request.admin_email,
+        admin_direct_dial=request.admin_direct_dial,
+        admin_cell_phone=request.admin_cell_phone,
+        additional_users=additional_users,
+        organization_id=request.organization_id,
+        reviewed_by=request.reviewed_by,
+        reviewed_at=request.reviewed_at,
+        rejection_reason=request.rejection_reason,
+        created_at=request.created_at,
+        updated_at=request.updated_at,
+    )
+
+
+@router.get("/registrations", response_model=List[OrganizationRegistrationResponse])
+async def list_organization_registrations(
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=500),
+    status: Optional[RegistrationStatus] = None,
+    search: Optional[str] = None,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.SYSTEM_ADMIN)),
+):
+    """List public organization registration requests (SYSTEM_ADMIN only)."""
+    query = select(OrganizationRegistrationRequest)
+
+    if status is not None:
+        query = query.where(OrganizationRegistrationRequest.status == status)
+    if search:
+        pattern = f"%{search.strip()}%"
+        query = query.where(
+            or_(
+                OrganizationRegistrationRequest.company_name.ilike(pattern),
+                OrganizationRegistrationRequest.admin_email.ilike(pattern),
+            )
+        )
+
+    query = (
+        query.order_by(OrganizationRegistrationRequest.created_at.desc())
+        .offset(skip)
+        .limit(limit)
+    )
+    result = await db.execute(query)
+    requests = result.scalars().all()
+    return [_registration_to_response(item) for item in requests]
+
+
+@router.get("/registrations/{request_id}", response_model=OrganizationRegistrationResponse)
+async def get_organization_registration(
+    request_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.SYSTEM_ADMIN)),
+):
+    """Get a single organization registration request."""
+    registration_service = get_registration_service()
+    try:
+        request = await registration_service._get_request(db, request_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    logo_preview_base64, logo_content_type = await _registration_logo_preview(request)
+    return _registration_to_response(
+        request,
+        logo_preview_base64=logo_preview_base64,
+        logo_content_type=logo_content_type,
+    )
+
+
+@router.get("/registrations/{request_id}/logo")
+async def get_registration_logo(
+    request_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.SYSTEM_ADMIN)),
+):
+    """Return logo bytes for a pending registration request."""
+    registration_service = get_registration_service()
+    try:
+        request = await registration_service._get_request(db, request_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+    if not request.logo_url:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No logo uploaded")
+
+    logo_bytes = await load_organization_logo_bytes(request.logo_url)
+    if not logo_bytes:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Logo file not found")
+
+    return Response(
+        content=logo_bytes,
+        media_type=guess_logo_content_type(request.logo_url),
+    )
+
+
+@router.post(
+    "/registrations/{request_id}/approve",
+    response_model=OrganizationRegistrationApproveResponse,
+)
+async def approve_organization_registration(
+    request_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.SYSTEM_ADMIN)),
+):
+    """Approve a pending registration: create org, settings, and send invites."""
+    registration_service = get_registration_service()
+    try:
+        request, organization_id, invitations_sent = await registration_service.approve_registration(
+            db,
+            request_id,
+            current_user,
+            frontend_url=settings.FRONTEND_URL,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    return OrganizationRegistrationApproveResponse(
+        registration=_registration_to_response(request),
+        organization_id=organization_id,
+        invitations_sent=invitations_sent,
+        message=(
+            f"Approved {request.company_name}. "
+            f"{invitations_sent} invitation email(s) sent."
+        ),
+    )
+
+
+@router.post(
+    "/registrations/{request_id}/reject",
+    response_model=OrganizationRegistrationResponse,
+)
+async def reject_organization_registration(
+    request_id: int,
+    payload: OrganizationRegistrationReject,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.SYSTEM_ADMIN)),
+):
+    """Reject a pending registration request."""
+    registration_service = get_registration_service()
+    try:
+        request = await registration_service.reject_registration(
+            db,
+            request_id,
+            current_user,
+            reason=payload.reason,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    return _registration_to_response(request)

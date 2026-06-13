@@ -15,7 +15,7 @@ from app.models.session import Session, SessionResponse
 from app.models.scoring import ScoringResult
 from app.models.report import Report
 from app.models.checklist import ChecklistItem
-from app.models.user import User
+from app.models.user import User, Organization
 from app.models.organization_settings import OrganizationSettings
 from app.api.dependencies import get_current_user, get_session_access_filter
 from app.services.report_service import build_notes_map_for_pdf, get_report_service
@@ -251,11 +251,18 @@ async def generate_report(
     await db.commit()
     await db.refresh(scoring)
 
-    # Organization logo (optional) for PDF header
+    # Organization branding (optional) for PDF header
     org_logo_url: Optional[str] = None
+    org_name: Optional[str] = None
     owner_result = await db.execute(select(User).where(User.id == session.user_id))
     session_owner = owner_result.scalar_one_or_none()
     if session_owner and session_owner.organization_id:
+        org_result = await db.execute(
+            select(Organization).where(Organization.id == session_owner.organization_id)
+        )
+        organization = org_result.scalar_one_or_none()
+        if organization:
+            org_name = organization.name
         settings_result = await db.execute(
             select(OrganizationSettings).where(
                 OrganizationSettings.organization_id == session_owner.organization_id
@@ -343,6 +350,7 @@ async def generate_report(
             coaching_data=None,
             responses_data=responses_data,
             organization_logo_url=org_logo_url,
+            organization_name=org_name,
             notes_by_item_id=notes_by_item_id,
         )
 

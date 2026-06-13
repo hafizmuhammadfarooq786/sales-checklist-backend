@@ -64,7 +64,12 @@ class InvitationService:
         role: str,
         invited_by: int,
         team_id: Optional[int] = None,
-        frontend_url: str = "http://localhost:3000"
+        frontend_url: str = "http://localhost:3000",
+        first_name: Optional[str] = None,
+        last_name: Optional[str] = None,
+        direct_dial: Optional[str] = None,
+        cell_phone: Optional[str] = None,
+        auto_commit: bool = True,
     ) -> Invitation:
         """
         Create a new invitation, create user account with temporary password, and send invitation email.
@@ -118,6 +123,10 @@ class InvitationService:
         new_user = User(
             email=email,
             password_hash=auth_service.hash_password(temp_password),
+            first_name=(first_name or "").strip() or None,
+            last_name=(last_name or "").strip() or None,
+            direct_dial=(direct_dial or "").strip() or None,
+            cell_phone=(cell_phone or "").strip() or None,
             organization_id=organization_id,
             team_id=team_id,
             role=user_role,
@@ -183,7 +192,8 @@ class InvitationService:
             # doesn't look successful when the email wasn't actually sent.
             raise ValueError(f"Failed to send invitation email to {email}")
 
-        await db.commit()
+        if auto_commit:
+            await db.commit()
         return invitation
 
     async def verify_token(

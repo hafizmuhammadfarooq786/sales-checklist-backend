@@ -1,7 +1,7 @@
 """
-Report generation: two-page Sales Checklist PDF (ReportLab).
-Page 1: header + checklist (Item / Yes-No / Definition) + raw score explanation.
-Page 2: same header + item notes (no score block).
+Report generation: strict two-page Sales Checklist PDF (ReportLab).
+Page 1: header + checklist + score. Page 2: header + notes only.
+Compact Inter typography; no checklist rows split onto page 2.
 """
 import os
 import re
@@ -12,17 +12,34 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 from xml.sax.saxutils import escape
 
-import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import inch
-from reportlab.platypus import HRFlowable, Image, PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+from reportlab.pdfgen import canvas
+from reportlab.platypus import (
+    Image,
+    KeepTogether,
+    PageBreak,
+    Paragraph,
+    SimpleDocTemplate,
+    Spacer,
+    Table,
+    TableStyle,
+)
 
 from app.core.config import settings
 from app.models.session import Session
+from app.services.checklist_pdf_icons import (
+    build_definition_flowable,
+    build_item_text_flowable,
+    build_status_icon_flowable,
+    build_yn_text_flowable,
+)
+from app.services.pdf_fonts import register_pdf_fonts
+from app.services.risk_band_service import get_risk_label
 from app.services.s3_service import get_s3_service
 
 # Bundled default when org logo is missing or fails to load
@@ -30,9 +47,90 @@ _DEFAULT_LOGO_PATH = (
     Path(__file__).resolve().parent.parent / "static" / "branding" / "default_sales_checklist_logo.png"
 )
 
-NAVY = colors.HexColor("#1a365d")
+NAVY = colors.HexColor("#0b2e59")
 HEADER_TEXT = colors.white
-GRID = colors.HexColor("#c8d0e0")
+GRID = colors.HexColor("#d7dce3")
+ROW_SURFACE = colors.HexColor("#ffffff")
+ROW_ALT = colors.HexColor("#f5f6f8")
+SCORE_BOX_BG = colors.HexColor("#f5f6f8")
+INK_MUTED = colors.HexColor("#5b6473")
+FOOTER_TEXT = colors.HexColor("#888888")
+STRONG = colors.HexColor("#198754")
+CRITICAL = colors.HexColor("#b91c1c")
+
+_DEAL_STAGE_LABELS = {
+    "active": "Active",
+    "prospect": "Prospect",
+    "qualified": "Qualified",
+    "proposal": "Proposal",
+    "negotiation": "Negotiation",
+    "won": "Won",
+    "lost": "Lost",
+    "no_decision": "No Decision",
+    "disengaged": "Disengaged",
+    "on_hold": "On Hold",
+}
+
+_RISK_BAND_COLORS = {
+    "green": (colors.HexColor("#eaf7f0"), colors.HexColor("#198754")),
+    "yellow": (colors.HexColor("#fff4e5"), colors.HexColor("#b45309")),
+    "red": (colors.HexColor("#fdecec"), colors.HexColor("#b91c1c")),
+}
+
+# Keep page 2 to a single sheet when note text runs long
+_MAX_NOTE_TEXT_CHARS = 320
+
+
+def _truncate_note_text(text: str) -> str:
+    cleaned = (text or "").strip()
+    if len(cleaned) <= _MAX_NOTE_TEXT_CHARS:
+        return cleaned
+    return cleaned[:_MAX_NOTE_TEXT_CHARS].rstrip() + "…"
+
+
+def _draw_page_footer(
+    cnv: canvas.Canvas,
+    page_num: int,
+    page_count: int,
+    footer_meta: Dict[str, Any],
+) -> None:
+    """Footer line, branding, and page numbers on every page."""
+    w, _h = letter
+    inset = 0.5 * inch
+    font_name = footer_meta.get("font_regular", "Helvetica")
+    generated_at = footer_meta.get("generated_at", "")
+
+    cnv.saveState()
+    line_y = 0.42 * inch
+    cnv.setFont(font_name, 7)
+    cnv.setFillColor(FOOTER_TEXT)
+    left = f"The Sales Checklist™ | Generated {generated_at}"
+    cnv.drawString(inset, line_y, left)
+
+    page_label = f"Page {page_num} of {page_count}"
+    cnv.drawCentredString(w / 2, line_y, page_label)
+    cnv.restoreState()
+
+
+class _NumberedCanvas(canvas.Canvas):
+    """Two-pass canvas so footers can show 'Page X of Y'."""
+
+    def __init__(self, *args, footer_meta: Optional[Dict[str, Any]] = None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._saved_page_states: List[Dict[str, Any]] = []
+        self._footer_meta = footer_meta or {}
+
+    def showPage(self) -> None:
+        self._saved_page_states.append(dict(self.__dict__))
+        self._startPage()
+
+    def save(self) -> None:
+        page_count = len(self._saved_page_states)
+        for page_num, state in enumerate(self._saved_page_states, start=1):
+            self.__dict__.update(state)
+            _draw_page_footer(self, page_num, page_count, self._footer_meta)
+            canvas.Canvas.showPage(self)
+        canvas.Canvas.save(self)
 
 
 def _para_style(name: str, **kwargs) -> ParagraphStyle:
@@ -57,43 +155,33 @@ def _load_default_logo_bytes() -> bytes:
     return _DEFAULT_LOGO_PATH.read_bytes()
 
 
-async def _fetch_org_logo_bytes(url: str) -> Optional[bytes]:
-    u = (url or "").strip()
-    if not u:
-        return None
-    try:
-        async with httpx.AsyncClient(timeout=12.0, follow_redirects=True) as client:
-            r = await client.get(u)
-            if r.status_code != 200:
-                return None
-            content = r.content
-            if not content or len(content) < 32:
-                return None
-            ctype = (r.headers.get("content-type") or "").lower()
-            if ctype and not any(x in ctype for x in ("image", "octet-stream", "application/x-www-form-urlencoded")):
-                if "html" in ctype or "json" in ctype:
-                    return None
-            return content
-    except Exception:
-        return None
-
-
 async def _resolve_logo_bytes(organization_logo_url: Optional[str]) -> bytes:
     if organization_logo_url:
-        data = await _fetch_org_logo_bytes(organization_logo_url)
+        from app.services.org_logo_service import load_organization_logo_bytes
+
+        data = await load_organization_logo_bytes(organization_logo_url)
         if data:
             return data
     return _load_default_logo_bytes()
 
 
-def _logo_flowable(logo_bytes: bytes, max_width: float = 0.7 * inch) -> Image:
+# Header logo — max height ~1in; width scales proportionally (wide logos need width cap, not height cap)
+_MAX_LOGO_HEIGHT = 72
+_MAX_LOGO_WIDTH = 4.0 * inch
+
+
+def _logo_flowable(
+    logo_bytes: bytes,
+    max_height: float = _MAX_LOGO_HEIGHT,
+    max_width: float = _MAX_LOGO_WIDTH,
+) -> Image:
     bio = BytesIO(logo_bytes)
     img = Image(bio)
     iw, ih = img.imageWidth, img.imageHeight
     if iw <= 0 or ih <= 0:
         iw, ih = 512, 512
-    scale = max_width / float(iw)
-    img.drawWidth = max_width
+    scale = min(max_height / float(ih), max_width / float(iw))
+    img.drawWidth = iw * scale
     img.drawHeight = ih * scale
     return img
 
@@ -103,24 +191,28 @@ class ReportService:
 
     def __init__(self) -> None:
         self.styles = getSampleStyleSheet()
+        font_regular, font_bold = register_pdf_fonts()
+        self._font_regular = font_regular
+        self._font_bold = font_bold
+
         self._cell_body = _para_style(
             "ChecklistCellBody",
-            fontName="Helvetica",
-            fontSize=8,
-            leading=10,
+            fontName=font_regular,
+            fontSize=6.5,
+            leading=8,
             textColor=colors.HexColor("#1a1a1a"),
         )
         self._cell_header = _para_style(
             "ChecklistCellHeader",
-            fontName="Helvetica-Bold",
-            fontSize=9,
-            leading=11,
+            fontName=font_bold,
+            fontSize=7,
+            leading=8,
             textColor=HEADER_TEXT,
             alignment=1,
         )
         self._header_meta = _para_style(
             "HeaderMeta",
-            fontName="Helvetica",
+            fontName=font_regular,
             fontSize=10,
             leading=13,
             textColor=colors.HexColor("#1a1a1a"),
@@ -129,22 +221,70 @@ class ReportService:
         self._header_meta_label = ParagraphStyle(
             "HeaderMetaLabel",
             parent=self.styles["Normal"],
-            fontName="Helvetica-Bold",
+            fontName=font_bold,
             fontSize=9,
             leading=12,
             textColor=NAVY,
             alignment=2,
         )
+        self._header_meta_label_center = ParagraphStyle(
+            "HeaderMetaLabelCenter",
+            parent=self.styles["Normal"],
+            fontName=font_bold,
+            fontSize=7,
+            leading=9,
+            textColor=NAVY,
+            alignment=1,
+        )
+        self._header_meta_center = _para_style(
+            "HeaderMetaCenter",
+            fontName=font_regular,
+            fontSize=7.5,
+            leading=9,
+            textColor=colors.HexColor("#1a1a1a"),
+            alignment=1,
+        )
+        self._org_name = _para_style(
+            "OrgName",
+            fontName=font_bold,
+            fontSize=9,
+            leading=11,
+            textColor=NAVY,
+            alignment=1,
+        )
         self._score_blurb = _para_style(
             "ScoreBlurb",
-            fontName="Helvetica",
-            fontSize=9,
-            leading=12,
+            fontName=font_regular,
+            fontSize=6.5,
+            leading=8,
             textColor=colors.HexColor("#333333"),
+        )
+        self._score_value = _para_style(
+            "ScoreValue",
+            fontName=font_bold,
+            fontSize=14,
+            leading=16,
+            textColor=NAVY,
+            alignment=1,
+        )
+        self._score_sub = _para_style(
+            "ScoreSub",
+            fontName=font_regular,
+            fontSize=6,
+            leading=7,
+            textColor=INK_MUTED,
+            alignment=1,
+        )
+        self._score_chip = _para_style(
+            "ScoreChip",
+            fontName=font_bold,
+            fontSize=6.5,
+            leading=8,
+            alignment=1,
         )
         self._page_title = _para_style(
             "PageTitle",
-            fontName="Helvetica-Bold",
+            fontName=font_bold,
             fontSize=11,
             leading=14,
             textColor=NAVY,
@@ -152,10 +292,63 @@ class ReportService:
         )
         self._notes_label = _para_style(
             "NotesLabel",
-            fontName="Helvetica-Bold",
-            fontSize=8,
-            leading=10,
+            fontName=font_bold,
+            fontSize=6.5,
+            leading=8,
             textColor=colors.HexColor("#223b66"),
+        )
+        self._notes_body = _para_style(
+            "NotesBody",
+            fontName=font_regular,
+            fontSize=6.5,
+            leading=8,
+            textColor=colors.HexColor("#1a1a1a"),
+        )
+        self._item_title = _para_style(
+            "ItemTitle",
+            fontName=font_bold,
+            fontSize=6.5,
+            leading=8,
+            textColor=colors.HexColor("#0b1220"),
+        )
+        self._index_cell = _para_style(
+            "IndexCell",
+            fontName=font_bold,
+            fontSize=6.5,
+            leading=8,
+            textColor=colors.HexColor("#0b1220"),
+            alignment=1,
+        )
+        self._yn_yes = _para_style(
+            "YnYes",
+            fontName=font_bold,
+            fontSize=6.5,
+            leading=8,
+            textColor=STRONG,
+            alignment=1,
+        )
+        self._yn_no = _para_style(
+            "YnNo",
+            fontName=font_bold,
+            fontSize=6.5,
+            leading=8,
+            textColor=CRITICAL,
+            alignment=1,
+        )
+        self._yn_neutral = _para_style(
+            "YnNeutral",
+            fontName=font_regular,
+            fontSize=6.5,
+            leading=8,
+            textColor=INK_MUTED,
+            alignment=1,
+        )
+        self._definition_letter = _para_style(
+            "DefinitionLetter",
+            fontName=font_bold,
+            fontSize=6.5,
+            leading=8,
+            textColor=colors.HexColor("#0b1220"),
         )
 
     async def generate_session_report(
@@ -167,6 +360,7 @@ class ReportService:
         coaching_data: Optional[Dict[str, Any]] = None,
         responses_data: Optional[List[Dict[str, Any]]] = None,
         organization_logo_url: Optional[str] = None,
+        organization_name: Optional[str] = None,
         notes_by_item_id: Optional[Dict[int, str]] = None,
     ) -> Dict[str, Any]:
         """
@@ -200,64 +394,62 @@ class ReportService:
         buffer = BytesIO()
         customer_name = session_data.get("customer_name", "Report")
         pdf_title = f"The Sales Checklist — {customer_name}"
+        generated_at = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+        footer_meta = {
+            "generated_at": generated_at,
+            "font_regular": self._font_regular,
+        }
 
-        def _draw_page_border(canvas, _doc):
-            # User-requested: page border only (no header boxes),
-            # drawn on both pages at a "2px-ish" thickness.
-            w, h = letter
-            # Match ReportLab content margins for alignment with tables/text.
-            inset = 0.5 * inch
-            canvas.saveState()
-            canvas.setStrokeColor(colors.HexColor("#111827"))  # slate-900-ish
-            canvas.setLineWidth(1.2)  # thin ~2px-ish
-            canvas.rect(inset, inset, w - inset * 2, h - inset * 2, stroke=1, fill=0)
-            canvas.restoreState()
+        def _canvas_maker(filename: str, **kwargs):
+            return _NumberedCanvas(filename, footer_meta=footer_meta, **kwargs)
 
         doc = SimpleDocTemplate(
             buffer,
             pagesize=letter,
-            rightMargin=0.5 * inch,
-            leftMargin=0.5 * inch,
-            topMargin=0.5 * inch,
-            bottomMargin=0.5 * inch,
+            rightMargin=0.45 * inch,
+            leftMargin=0.45 * inch,
+            topMargin=0.42 * inch,
+            bottomMargin=0.52 * inch,
             title=pdf_title,
             author="The Sales Checklist",
-            onFirstPage=_draw_page_border,
-            onLaterPages=_draw_page_border,
         )
 
         story: List[Any] = []
-        story.extend(
-            self._build_shared_header(_logo_flowable(logo_bytes), customer, str(pursuit), review_str)
+        org_display = (organization_name or "").strip() or "The Sales Checklist"
+        page1: List[Any] = []
+        page1.extend(
+            self._build_shared_header(
+                _logo_flowable(logo_bytes),
+                org_display,
+                customer,
+                str(pursuit),
+                review_str,
+            )
         )
-        story.append(Spacer(1, 10))
-        story.append(Paragraph("Checklist", self._page_title))
-        story.append(Spacer(1, 4))
-
         if responses_data:
-            story.extend(self._build_page1_checklist_table(responses_data))
+            page1.extend(self._build_page1_checklist_table(responses_data))
         else:
-            story.append(Paragraph("No checklist responses.", self._cell_body))
-
-        story.append(Spacer(1, 10))
-        story.extend(self._build_score_explanation(raw_total, int(max_raw)))
+            page1.append(Paragraph("No checklist responses.", self._cell_body))
+        page1.extend(self._build_score_explanation(scoring_data, raw_total, int(max_raw)))
+        story.append(KeepTogether(page1))
 
         story.append(PageBreak())
+
         story.extend(
-            self._build_shared_header(_logo_flowable(logo_bytes), customer, str(pursuit), review_str)
+            self._build_shared_header(
+                _logo_flowable(logo_bytes),
+                org_display,
+                customer,
+                str(pursuit),
+                review_str,
+            )
         )
-        story.append(Spacer(1, 10))
-        story.append(Paragraph("Checklist item notes", self._page_title))
-        story.append(Spacer(1, 4))
         if responses_data:
             story.extend(self._build_page2_notes_table(responses_data, notes_by_item_id))
         else:
-            story.append(Paragraph("No notes.", self._cell_body))
+            story.append(Paragraph("No notes.", self._notes_body))
 
-        story.append(Spacer(1, 16))
-        story.extend(self._build_footer())
-
-        doc.build(story)
+        doc.build(story, canvasmaker=_canvas_maker)
 
         pdf_bytes = buffer.getvalue()
         buffer.close()
@@ -312,67 +504,151 @@ class ReportService:
         return name[:50] if name else "report"
 
     def _format_pursuit_label(self, pursuit: str) -> str:
-        """Normalize enum-like values to uppercase label only."""
+        """Human-readable deal stage (matches frontend DEAL_STAGE_OPTIONS)."""
         raw = str(pursuit or "").strip()
         if not raw:
             return "N/A"
         if "." in raw:
             raw = raw.split(".")[-1]
-        return raw.upper().replace(" ", "_")
+        key = raw.lower().replace(" ", "_")
+        if key in _DEAL_STAGE_LABELS:
+            return _DEAL_STAGE_LABELS[key]
+        return key.replace("_", " ").title()
+
+    def _build_meta_field(self, label: str, value: str) -> Table:
+        cell = Table(
+            [
+                [Paragraph(f"<b>{label}</b>", self._header_meta_label_center)],
+                [_safe_paragraph_html(value, self._header_meta_center)],
+            ],
+            colWidths=[2.2 * inch],
+        )
+        cell.setStyle(
+            TableStyle(
+                [
+                    ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 4),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+                    ("TOPPADDING", (0, 0), (-1, -1), 0),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+                ]
+            )
+        )
+        return cell
 
     def _build_shared_header(
         self,
         logo: Image,
+        organization_name: str,
         customer: str,
         pursuit: str,
         review_date: str,
     ) -> List[Any]:
-        meta_rows = [
-            [
-                Paragraph("<b>Customer</b>", self._header_meta_label),
-                _safe_paragraph_html(customer, self._header_meta),
-            ],
-            [
-                Paragraph("<b>Deal Stage</b>", self._header_meta_label),
-                _safe_paragraph_html(pursuit, self._header_meta),
-            ],
-            [
-                Paragraph("<b>Review date</b>", self._header_meta_label),
-                _safe_paragraph_html(review_date, self._header_meta),
-            ],
-        ]
-        meta_table = Table(meta_rows, colWidths=[1.15 * inch, 4.35 * inch])
-        meta_table.setStyle(
+        content_width = 7.0 * inch
+
+        logo_row = Table([[logo]], colWidths=[content_width])
+        logo_row.setStyle(
             TableStyle(
                 [
-                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                    ("ALIGN", (0, 0), (0, -1), "RIGHT"),
-                    ("ALIGN", (1, 0), (1, -1), "LEFT"),
-                    ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-                    ("TOPPADDING", (0, 0), (-1, -1), 2),
+                    ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+                    ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
                 ]
             )
         )
 
-        outer = Table(
-            [[logo, meta_table]],
-            colWidths=[1.35 * inch, 5.65 * inch],
+        org_row = Table(
+            [[_safe_paragraph_html(organization_name, self._org_name)]],
+            colWidths=[content_width],
         )
-        outer.setStyle(
+        org_row.setStyle(
             TableStyle(
                 [
+                    ("ALIGN", (0, 0), (-1, -1), "CENTER"),
                     ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-                    ("LEFTPADDING", (0, 0), (-1, -1), 10),
-                    ("RIGHTPADDING", (0, 0), (-1, -1), 10),
-                    ("TOPPADDING", (0, 0), (-1, -1), 8),
-                    ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
                 ]
             )
         )
-        return [outer, Spacer(1, 6)]
+
+        meta_row = Table(
+            [
+                [
+                    self._build_meta_field("Customer", customer),
+                    self._build_meta_field("Deal Stage", pursuit),
+                    self._build_meta_field("Review date", review_date),
+                ]
+            ],
+            colWidths=[2.2 * inch, 2.2 * inch, 2.6 * inch],
+        )
+        meta_row.setStyle(
+            TableStyle(
+                [
+                    ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                ]
+            )
+        )
+
+        header_stack = Table(
+            [[logo_row], [org_row], [meta_row]],
+            colWidths=[content_width],
+        )
+        header_stack.setStyle(
+            TableStyle(
+                [
+                    ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                    ("TOPPADDING", (0, 0), (-1, -1), 0),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+                ]
+            )
+        )
+        return [header_stack, Spacer(1, 4)]
+
+    def _table_border_style(self) -> list:
+        """Shared grid-only borders for checklist/notes tables."""
+        return [
+            ("GRID", (0, 0), (-1, -1), 0.5, GRID),
+            ("LINEBELOW", (0, 0), (-1, 0), 0.75, GRID),
+        ]
+
+    def _checklist_table_style(self) -> TableStyle:
+        # Page 1: status icon | item title | Y/N text | definition
+        return TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, 0), NAVY),
+                ("TEXTCOLOR", (0, 0), (-1, 0), HEADER_TEXT),
+                *self._table_border_style(),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("VALIGN", (0, 1), (2, -1), "MIDDLE"),
+                ("ALIGN", (0, 0), (0, -1), "CENTER"),
+                ("ALIGN", (2, 0), (2, -1), "CENTER"),
+                ("ALIGN", (1, 0), (1, -1), "LEFT"),
+                ("ALIGN", (3, 0), (3, -1), "LEFT"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 4),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+                ("LEFTPADDING", (0, 0), (0, -1), 2),
+                ("RIGHTPADDING", (0, 0), (0, -1), 2),
+                ("TOPPADDING", (0, 0), (-1, 0), 3),
+                ("BOTTOMPADDING", (0, 0), (-1, 0), 3),
+                ("TOPPADDING", (0, 1), (-1, -1), 3),
+                ("BOTTOMPADDING", (0, 1), (-1, -1), 3),
+                ("TOPPADDING", (0, 1), (2, -1), 4),
+                ("BOTTOMPADDING", (0, 1), (2, -1), 4),
+                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [ROW_SURFACE, ROW_ALT]),
+            ]
+        )
 
     def _build_page1_checklist_table(self, responses_data: List[Dict[str, Any]]) -> List[Any]:
+        # tick/cross | title | Yes/No text | definition
         header = [
+            Paragraph("<nobr>STATUS</nobr>", self._cell_header),
             Paragraph("ITEM", self._cell_header),
             Paragraph("Y/N", self._cell_header),
             Paragraph("DEFINITION", self._cell_header),
@@ -387,58 +663,148 @@ class ReportService:
             title = item.get("title") or item.get("name") or f"Item {resp.get('item_id', '')}"
             definition = item.get("definition") or ""
             validated = resp.get("is_validated")
-            if validated is True:
-                yn = "Yes"
-            elif validated is False:
-                yn = "No"
-            else:
-                yn = "—"
             rows.append(
                 [
-                    _safe_paragraph_html(str(title), self._cell_body),
-                    Paragraph(f"<para align='center'>{escape(yn)}</para>", self._cell_body),
-                    _safe_paragraph_html(str(definition), self._cell_body),
+                    build_status_icon_flowable(
+                        validated, self._index_cell, size=0.13 * inch
+                    ),
+                    build_item_text_flowable(str(title), self._item_title),
+                    build_yn_text_flowable(
+                        validated,
+                        self._yn_yes,
+                        self._yn_no,
+                        self._yn_neutral,
+                    ),
+                    build_definition_flowable(
+                        str(definition),
+                        self._cell_body,
+                        self._definition_letter,
+                    ),
                 ]
             )
 
         tbl = Table(
             rows,
-            colWidths=[1.35 * inch, 0.45 * inch, 5.2 * inch],
+            colWidths=[0.60 * inch, 1.12 * inch, 0.32 * inch, 4.96 * inch],
             repeatRows=1,
+            splitByRow=0,
         )
-        tbl.setStyle(
+        tbl.setStyle(self._checklist_table_style())
+        return [tbl]
+
+    def _risk_band_chip(self, risk_band: Any) -> Table:
+        value = risk_band.value if hasattr(risk_band, "value") else str(risk_band or "")
+        bg, fg = _RISK_BAND_COLORS.get(value, (SCORE_BOX_BG, NAVY))
+        label = get_risk_label(value)
+        chip_style = ParagraphStyle(
+            "RiskChipDynamic",
+            parent=self._score_chip,
+            textColor=fg,
+        )
+        chip = Table(
+            [[Paragraph(f"<b>{escape(label)}</b>", chip_style)]],
+            colWidths=[0.95 * inch],
+        )
+        chip.setStyle(
             TableStyle(
                 [
-                    ("BACKGROUND", (0, 0), (-1, 0), NAVY),
-                    ("TEXTCOLOR", (0, 0), (-1, 0), HEADER_TEXT),
-                    ("GRID", (0, 0), (-1, -1), 0.5, GRID),
-                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                    ("ALIGN", (0, 0), (-1, -1), "LEFT"),
-                    ("LEFTPADDING", (0, 0), (-1, -1), 5),
-                    ("RIGHTPADDING", (0, 0), (-1, -1), 5),
-                    ("TOPPADDING", (0, 0), (-1, -1), 4),
-                    ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-                    ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f7f8fb")]),
+                    ("BACKGROUND", (0, 0), (-1, -1), bg),
+                    ("BOX", (0, 0), (-1, -1), 1, fg),
+                    ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+                    ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 6),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+                    ("TOPPADDING", (0, 0), (-1, -1), 2),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
                 ]
             )
         )
-        return [tbl]
+        return chip
 
-    def _build_score_explanation(self, raw_total: int, max_raw: int) -> List[Any]:
-        lines = (
-            "Each checklist item is scored as follows: "
-            "<b>Yes</b> counts as <b>10</b> points; <b>No</b> counts as <b>0</b> points. "
-            "The <b>total score</b> is the sum of those item scores."
+    def _build_score_explanation(
+        self,
+        scoring_data: Dict[str, Any],
+        raw_total: int,
+        max_raw: int,
+    ) -> List[Any]:
+        total_score = scoring_data.get("total_score")
+        if total_score is None and max_raw > 0:
+            total_score = (raw_total / max_raw) * 100
+        score_pct = int(round(float(total_score or 0)))
+
+        blurb = Paragraph(
+            (
+                "<b>Yes</b> = 10 pts, <b>No</b> = 0 pts. "
+                f"Raw points: {int(raw_total)}/{int(max_raw)}."
+            ),
+            self._score_blurb,
         )
-        total_line = (
-            f"<b>Total score for this checklist:</b> {int(raw_total)} "
-            f"out of {int(max_raw)}."
+
+        score_line = Table(
+            [
+                [
+                    Paragraph(f"<b>{score_pct}</b>", self._score_value),
+                    Paragraph("/100", self._score_sub),
+                ]
+            ],
+            colWidths=[0.5 * inch, 0.35 * inch],
         )
-        return [
-            Paragraph(lines, self._score_blurb),
-            Spacer(1, 4),
-            Paragraph(total_line, self._score_blurb),
-        ]
+        score_line.setStyle(
+            TableStyle(
+                [
+                    ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+                    ("VALIGN", (0, 0), (-1, -1), "BOTTOM"),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                    ("TOPPADDING", (0, 0), (-1, -1), 0),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+                ]
+            )
+        )
+
+        score_block = Table(
+            [
+                [score_line],
+                [self._risk_band_chip(scoring_data.get("risk_band"))],
+            ],
+            colWidths=[1.45 * inch],
+        )
+        score_block.setStyle(
+            TableStyle(
+                [
+                    ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+                    ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                    ("TOPPADDING", (0, 0), (-1, -1), 0),
+                    ("BOTTOMPADDING", (0, 0), (0, 0), 1),
+                    ("TOPPADDING", (0, 1), (0, 1), 2),
+                    ("BOTTOMPADDING", (0, 1), (0, 1), 0),
+                ]
+            )
+        )
+
+        inner = Table(
+            [[blurb, score_block]],
+            colWidths=[5.55 * inch, 1.45 * inch],
+        )
+        inner.setStyle(
+            TableStyle(
+                [
+                    ("BACKGROUND", (0, 0), (-1, -1), SCORE_BOX_BG),
+                    ("GRID", (0, 0), (-1, -1), 0.5, GRID),
+                    ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                    ("ALIGN", (1, 0), (1, 0), "CENTER"),
+                    ("LEFTPADDING", (0, 0), (0, 0), 6),
+                    ("RIGHTPADDING", (0, 0), (0, 0), 4),
+                    ("LEFTPADDING", (1, 0), (1, 0), 2),
+                    ("RIGHTPADDING", (1, 0), (1, 0), 6),
+                    ("TOPPADDING", (0, 0), (-1, -1), 5),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+                ]
+            )
+        )
+        return [Spacer(1, 3), inner]
 
     def _build_page2_notes_table(
         self,
@@ -446,6 +812,7 @@ class ReportService:
         notes_by_item_id: Dict[int, Dict[str, Any]],
     ) -> List[Any]:
         header = [
+            Paragraph("#", self._cell_header),
             Paragraph("ITEM", self._cell_header),
             Paragraph("NOTES", self._cell_header),
         ]
@@ -457,31 +824,41 @@ class ReportService:
         for resp in sorted_responses:
             item = resp.get("item") or {}
             iid = resp.get("item_id")
+            order = int(item.get("order") or iid or 0)
             title = item.get("title") or item.get("name") or f"Item {iid}"
             note_payload = notes_by_item_id.get(iid, {}) if iid is not None else {}
             rows.append(
                 [
-                    _safe_paragraph_html(str(title), self._cell_body),
+                    Paragraph(str(order), self._index_cell),
+                    build_item_text_flowable(str(title), self._item_title),
                     self._build_notes_cell(note_payload),
                 ]
             )
-        tbl = Table(rows, colWidths=[1.85 * inch, 5.15 * inch], repeatRows=1)
-        tbl.setStyle(
-            TableStyle(
-                [
-                    ("BACKGROUND", (0, 0), (-1, 0), NAVY),
-                    ("TEXTCOLOR", (0, 0), (-1, 0), HEADER_TEXT),
-                    ("GRID", (0, 0), (-1, -1), 0.5, GRID),
-                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                    ("ALIGN", (0, 0), (-1, -1), "LEFT"),
-                    ("LEFTPADDING", (0, 0), (-1, -1), 5),
-                    ("RIGHTPADDING", (0, 0), (-1, -1), 5),
-                    ("TOPPADDING", (0, 0), (-1, -1), 4),
-                    ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-                    ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f7f8fb")]),
-                ]
-            )
+        tbl = Table(
+            rows,
+            colWidths=[0.28 * inch, 1.2 * inch, 5.52 * inch],
+            repeatRows=1,
+            splitByRow=1,
         )
+        notes_style = TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, 0), NAVY),
+                ("TEXTCOLOR", (0, 0), (-1, 0), HEADER_TEXT),
+                *self._table_border_style(),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("VALIGN", (0, 1), (1, -1), "MIDDLE"),
+                ("ALIGN", (0, 0), (0, -1), "CENTER"),
+                ("ALIGN", (1, 0), (-1, -1), "LEFT"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 4),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+                ("TOPPADDING", (0, 0), (-1, 0), 3),
+                ("BOTTOMPADDING", (0, 0), (-1, 0), 3),
+                ("TOPPADDING", (0, 1), (-1, -1), 3),
+                ("BOTTOMPADDING", (0, 1), (-1, -1), 3),
+                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [ROW_SURFACE, ROW_ALT]),
+            ]
+        )
+        tbl.setStyle(notes_style)
         return [tbl]
 
     def _build_notes_cell(self, payload: Dict[str, Any]) -> Any:
@@ -492,46 +869,47 @@ class ReportService:
         - Structured content sections with compact tables
         """
         if not payload:
-            return _safe_paragraph_html("", self._cell_body)
+            return _safe_paragraph_html("", self._notes_body)
 
         blocks: List[Any] = []
-        note_text = (payload.get("note_text") or "").strip()
+        note_text = _truncate_note_text(payload.get("note_text") or "")
         influencers = payload.get("decision_influencers") or []
         structured = payload.get("structured_content")
 
         if note_text:
-            blocks.append(_safe_paragraph_html(note_text, self._cell_body))
+            blocks.append(_safe_paragraph_html(note_text, self._notes_body))
 
         if influencers:
             if blocks:
-                blocks.append(Spacer(1, 3))
+                blocks.append(Spacer(1, 1))
             blocks.append(Paragraph("Decision influencers", self._notes_label))
-            blocks.append(Spacer(1, 2))
+            blocks.append(Spacer(1, 1))
             blocks.append(self._build_influencers_table(influencers))
 
         if structured:
             if blocks:
-                blocks.append(Spacer(1, 3))
+                blocks.append(Spacer(1, 1))
             blocks.append(Paragraph("Structured notes", self._notes_label))
-            blocks.append(Spacer(1, 2))
+            blocks.append(Spacer(1, 1))
             blocks.extend(self._build_structured_blocks(structured))
 
-        return blocks if blocks else _safe_paragraph_html("", self._cell_body)
+        return blocks if blocks else _safe_paragraph_html("", self._notes_body)
 
     def _build_influencers_table(self, influencers: List[Dict[str, Any]]) -> Table:
+        body = self._notes_body
         rows: List[List[Any]] = [
             [
-                Paragraph("<b>Name</b>", self._cell_body),
-                Paragraph("<b>Title</b>", self._cell_body),
-                Paragraph("<b>Email</b>", self._cell_body),
+                Paragraph("<b>Name</b>", body),
+                Paragraph("<b>Title</b>", body),
+                Paragraph("<b>Email</b>", body),
             ]
         ]
         for inf in influencers:
             rows.append(
                 [
-                    _safe_paragraph_html(str(inf.get("name") or ""), self._cell_body),
-                    _safe_paragraph_html(str(inf.get("title") or ""), self._cell_body),
-                    _safe_paragraph_html(str(inf.get("email") or ""), self._cell_body),
+                    _safe_paragraph_html(str(inf.get("name") or ""), body),
+                    _safe_paragraph_html(str(inf.get("title") or ""), body),
+                    _safe_paragraph_html(str(inf.get("email") or ""), body),
                 ]
             )
         tbl = Table(rows, colWidths=[1.0 * inch, 1.25 * inch, 2.7 * inch], repeatRows=1)
@@ -541,16 +919,17 @@ class ReportService:
                     ("GRID", (0, 0), (-1, -1), 0.35, GRID),
                     ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#eef2f9")),
                     ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                    ("LEFTPADDING", (0, 0), (-1, -1), 3),
-                    ("RIGHTPADDING", (0, 0), (-1, -1), 3),
-                    ("TOPPADDING", (0, 0), (-1, -1), 2),
-                    ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 2),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 2),
+                    ("TOPPADDING", (0, 0), (-1, -1), 1),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 1),
                 ]
             )
         )
         return tbl
 
     def _build_structured_blocks(self, data: Any) -> List[Any]:
+        body = self._notes_body
         blocks: List[Any] = []
         if isinstance(data, dict):
             role_table = self._try_build_role_name_result_table(data)
@@ -566,8 +945,8 @@ class ReportService:
                 for k, v in scalar_pairs:
                     rows.append(
                         [
-                            _safe_paragraph_html(str(k).replace("_", " ").title(), self._cell_body),
-                            _safe_paragraph_html("" if v is None else str(v), self._cell_body),
+                            _safe_paragraph_html(str(k).replace("_", " ").title(), body),
+                            _safe_paragraph_html("" if v is None else str(v), body),
                         ]
                     )
                 kv_table = Table(rows, colWidths=[1.05 * inch, 3.65 * inch], repeatRows=0)
@@ -601,11 +980,11 @@ class ReportService:
                     for k in d.keys():
                         if k not in headers:
                             headers.append(k)
-                rows: List[List[Any]] = [[Paragraph(f"<b>{h}</b>", self._cell_body) for h in headers]]
+                rows: List[List[Any]] = [[Paragraph(f"<b>{h}</b>", body) for h in headers]]
                 for d in data:
                     rows.append(
                         [
-                            _safe_paragraph_html(str(d.get(h) or ""), self._cell_body)
+                            _safe_paragraph_html(str(d.get(h) or ""), body)
                             for h in headers
                         ]
                     )
@@ -633,13 +1012,13 @@ class ReportService:
 
             if all(not isinstance(x, (dict, list)) for x in data):
                 rows = [
-                    [Paragraph("<b>#</b>", self._cell_body), Paragraph("<b>Value</b>", self._cell_body)]
+                    [Paragraph("<b>#</b>", body), Paragraph("<b>Value</b>", body)]
                 ]
                 for idx, item in enumerate(data, start=1):
                     rows.append(
                         [
-                            _safe_paragraph_html(str(idx), self._cell_body),
-                            _safe_paragraph_html(str(item), self._cell_body),
+                            _safe_paragraph_html(str(idx), body),
+                            _safe_paragraph_html(str(item), body),
                         ]
                     )
                 t = Table(rows, colWidths=[0.35 * inch, 4.6 * inch], repeatRows=1)
@@ -659,9 +1038,9 @@ class ReportService:
                 return [t]
 
             # Mixed list fallback
-            return [_safe_paragraph_html(str(data), self._cell_body)]
+            return [_safe_paragraph_html(str(data), body)]
 
-        return [_safe_paragraph_html(str(data), self._cell_body)]
+        return [_safe_paragraph_html(str(data), body)]
 
     def _try_build_role_name_result_table(self, structured: Dict[str, Any]) -> Optional[Table]:
         """
@@ -671,11 +1050,12 @@ class ReportService:
         # Match the frontend visual order.
         role_keys = ["Finalizer", "Utilizer", "Specifiers"]
         found_any = False
+        body = self._notes_body
         rows: List[List[Any]] = [
             [
-                Paragraph("<b>ROLE</b>", self._cell_body),
-                Paragraph("<b>NAME</b>", self._cell_body),
-                Paragraph("<b>RESULT</b>", self._cell_body),
+                Paragraph("<b>ROLE</b>", body),
+                Paragraph("<b>NAME</b>", body),
+                Paragraph("<b>RESULT</b>", body),
             ]
         ]
 
@@ -725,9 +1105,9 @@ class ReportService:
                 continue
 
             role_label = role
-            name_cell = _safe_paragraph_html("\n".join(name_vals), self._cell_body)
-            result_cell = _safe_paragraph_html("\n".join(result_vals), self._cell_body)
-            rows.append([_safe_paragraph_html(role_label, self._cell_body), name_cell, result_cell])
+            name_cell = _safe_paragraph_html("\n".join(name_vals), body)
+            result_cell = _safe_paragraph_html("\n".join(result_vals), body)
+            rows.append([_safe_paragraph_html(role_label, body), name_cell, result_cell])
 
         if not found_any or len(rows) <= 1:
             return None
@@ -790,24 +1170,6 @@ class ReportService:
             if "value" in v and v["value"] is not None:
                 return [str(v["value"]).strip()]
         return [str(v)]
-
-    def _build_footer(self) -> List[Any]:
-        foot = ParagraphStyle(
-            "PdfFooter",
-            parent=self.styles["Normal"],
-            fontSize=7,
-            textColor=colors.HexColor("#888888"),
-            alignment=1,
-        )
-        return [
-            HRFlowable(width="100%", thickness=0.5, color=GRID),
-            Spacer(1, 6),
-            Paragraph(
-                f"The Sales Checklist™ | Generated {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}",
-                foot,
-            ),
-        ]
-
 
 _report_service: Optional[ReportService] = None
 

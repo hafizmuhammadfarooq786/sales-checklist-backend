@@ -29,6 +29,7 @@ openai==1.54.3
 # PDF Generation
 reportlab==4.2.4
 Pillow==10.4.0
+svglib==1.5.1
 
 # Celery for async tasks
 celery[redis]==5.4.0

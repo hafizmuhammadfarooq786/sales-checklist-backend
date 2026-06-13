@@ -1,0 +1,16 @@
+<svg width="64" height="64" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg" stroke="#1a1a2e" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <circle cx="32" cy="18" r="9" />
+  <text x="32" y="23" font-family="Arial, sans-serif" font-size="12" font-weight="700" fill="#1a1a2e" stroke="none" text-anchor="middle">?</text>
+  <path d="M32 3 v3.5" />
+  <path d="M22 5.5 l1.8 3" />
+  <path d="M42 5.5 l-1.8 3" />
+  <path d="M15 12 l3 1.6" />
+  <path d="M49 12 l-3 1.6" />
+  <path d="M14 40 C 16 51, 48 51, 50 40" />
+  <path d="M50 40 l3 -7" />
+  <path d="M45.5 42.5 l1.6 -7.5" />
+  <path d="M40.5 43.5 l0 -7.5" />
+  <path d="M14 40 l-2.5 -6.5" />
+  <path d="M15 44 l-5 4" />
+  <text x="32" y="61" font-family="Arial, sans-serif" font-size="9" font-weight="700" fill="#1a1a2e" stroke="none" text-anchor="middle">WIIFM?</text>
+</svg>
