@@ -152,49 +152,123 @@ class InvitationService:
         await db.flush()
         await db.refresh(invitation)
 
-        # Get organization and inviter details for email
+        await self._send_invitation_email_for_record(
+            db, invitation, temp_password, frontend_url
+        )
+
+        if auto_commit:
+            await db.commit()
+        return invitation
+
+    async def _send_invitation_email_for_record(
+        self,
+        db: AsyncSession,
+        invitation: Invitation,
+        temp_password: str,
+        frontend_url: str,
+    ) -> None:
         org_result = await db.execute(
-            select(Organization).where(Organization.id == organization_id)
+            select(Organization).where(Organization.id == invitation.organization_id)
         )
         organization = org_result.scalar_one()
 
         inviter_result = await db.execute(
-            select(User).where(User.id == invited_by)
+            select(User).where(User.id == invitation.invited_by)
         )
-        inviter = inviter_result.scalar_one()
+        inviter = inviter_result.scalar_one_or_none()
+        inviter_name = (
+            f"{inviter.first_name} {inviter.last_name}".strip()
+            if inviter and (inviter.first_name or inviter.last_name)
+            else "Your administrator"
+        )
 
-        # Get team name if team_id provided
         team_name = None
-        if team_id:
+        if invitation.team_id:
             team_result = await db.execute(
-                select(Team).where(Team.id == team_id)
+                select(Team).where(Team.id == invitation.team_id)
             )
             team = team_result.scalar_one_or_none()
             if team:
                 team_name = team.name
 
-        # Send invitation email with temporary password
-        invite_url = f"{frontend_url}/accept-invite?token={token}"
-        inviter_name = f"{inviter.first_name} {inviter.last_name}"
-
+        invite_url = f"{frontend_url}/accept-invite?token={invitation.token}"
         email_sent = await self.email_service.send_invitation_email(
-            to_email=email,
+            to_email=invitation.email,
             organization_name=organization.name,
             inviter_name=inviter_name,
             invite_url=invite_url,
-            role=role,
+            role=invitation.role,
             team_name=team_name,
-            temp_password=temp_password  # Pass temporary password to email
+            temp_password=temp_password,
         )
-
         if not email_sent:
-            # Hard-fail so the DB transaction can rollback and the invite
-            # doesn't look successful when the email wasn't actually sent.
-            raise ValueError(f"Failed to send invitation email to {email}")
+            raise ValueError(f"Failed to send invitation email to {invitation.email}")
 
-        if auto_commit:
-            await db.commit()
+    async def resend_invitation(
+        self,
+        db: AsyncSession,
+        invitation_id: int,
+        organization_id: int,
+        frontend_url: str,
+    ) -> Invitation:
+        """Regenerate invite token + temp password and resend the invitation email."""
+        result = await db.execute(
+            select(Invitation).where(Invitation.id == invitation_id)
+        )
+        invitation = result.scalar_one_or_none()
+        if not invitation:
+            raise ValueError("Invitation not found")
+        if invitation.organization_id != organization_id:
+            raise PermissionError("Invitation does not belong to this organization")
+        if invitation.accepted_at is not None:
+            raise ValueError("Invitation has already been accepted")
+
+        user_result = await db.execute(
+            select(User).where(
+                User.email == invitation.email,
+                User.organization_id == invitation.organization_id,
+            )
+        )
+        user = user_result.scalar_one_or_none()
+        if not user:
+            raise ValueError("Invited user account not found")
+
+        temp_password = self.generate_temp_password()
+        user.password_hash = auth_service.hash_password(temp_password)
+        user.must_change_password = True
+        user.is_active = True
+
+        invitation.token = self.generate_token()
+        invitation.expires_at = datetime.utcnow() + timedelta(days=self.token_expiry_days)
+
+        await self._send_invitation_email_for_record(
+            db, invitation, temp_password, frontend_url
+        )
+        await db.commit()
+        await db.refresh(invitation)
         return invitation
+
+    async def resend_pending_invitations_for_organization(
+        self,
+        db: AsyncSession,
+        organization_id: int,
+        frontend_url: str,
+    ) -> int:
+        """Resend all pending invitations for an organization. Returns count sent."""
+        invitations = await self.get_pending_invitations(db, organization_id)
+        if not invitations:
+            return 0
+
+        sent = 0
+        for invitation in invitations:
+            await self.resend_invitation(
+                db,
+                invitation.id,
+                organization_id,
+                frontend_url,
+            )
+            sent += 1
+        return sent
 
     async def verify_token(
         self,

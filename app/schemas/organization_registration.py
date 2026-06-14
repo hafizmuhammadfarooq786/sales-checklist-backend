@@ -132,3 +132,8 @@ class OrganizationRegistrationApproveResponse(BaseModel):
     organization_id: int
     invitations_sent: int
     message: str
+
+
+class OrganizationRegistrationResendInvitationsResponse(BaseModel):
+    invitations_resent: int
+    message: str

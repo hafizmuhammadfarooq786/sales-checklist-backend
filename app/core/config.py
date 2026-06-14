@@ -103,8 +103,12 @@ class Settings(BaseSettings):
     SES_REGION: str = Field(default="us-east-2")
     SES_SENDER_EMAIL: str = Field(default="")
 
-    # Email (SMTP fallback)
-    # When SES is not configured (or SES fails), the app can send emails via SMTP.
+    # Email transport: auto (from ENVIRONMENT), smtp (local dev), or ses (stage/prod).
+    # Local/development → SMTP only. Staging/production → SES only (no SMTP fallback).
+    EMAIL_PROVIDER: str = Field(default="auto")
+    EMAIL_COMPANY_NAME: str = Field(default="The Millau Group Global")
+
+    # Email (SMTP — local development)
     SMTP_HOST: str = Field(default="")
     SMTP_PORT: int = Field(default=587)
     SMTP_USERNAME: str = Field(default="")
@@ -113,6 +117,17 @@ class Settings(BaseSettings):
     SMTP_USE_TLS: bool = Field(default=True)
     SMTP_USE_SSL: bool = Field(default=False)
     SMTP_TIMEOUT_SECONDS: int = Field(default=30)
+
+    @property
+    def email_provider(self) -> str:
+        """Resolve email transport: smtp for local dev, ses for stage/prod."""
+        explicit = (self.EMAIL_PROVIDER or "auto").strip().lower()
+        if explicit in ("smtp", "ses"):
+            return explicit
+        env = (self.ENVIRONMENT or "development").strip().lower()
+        if env in ("production", "prod", "staging", "stage"):
+            return "ses"
+        return "smtp"
 
 
 settings = Settings()

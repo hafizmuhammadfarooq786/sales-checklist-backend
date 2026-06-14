@@ -27,11 +27,13 @@ from app.schemas.organization_registration import (
     OrganizationRegistrationApproveResponse,
     OrganizationRegistrationReject,
     OrganizationRegistrationResponse,
+    OrganizationRegistrationResendInvitationsResponse,
     SignupUserRowResponse,
 )
 from app.schemas.user import UserResponse, UserUpdate, AdminUserProvision
 from app.api.dependencies import require_roles
 from app.services.auth_service import auth_service
+from app.services.invitation_service import get_invitation_service
 from app.services.org_logo_service import guess_logo_content_type, load_organization_logo_bytes
 from app.services.registration_service import get_registration_service
 from app.core.config import settings
@@ -693,6 +695,55 @@ async def approve_organization_registration(
             f"Approved {request.company_name}. "
             f"{invitations_sent} invitation email(s) sent."
         ),
+    )
+
+
+@router.post(
+    "/registrations/{request_id}/resend-invitations",
+    response_model=OrganizationRegistrationResendInvitationsResponse,
+)
+async def resend_registration_invitations(
+    request_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.SYSTEM_ADMIN)),
+):
+    """Resend pending invitation emails for an approved registration's organization."""
+    registration_service = get_registration_service()
+    try:
+        request = await registration_service._get_request(db, request_id)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+    if request.status != RegistrationStatus.APPROVED or not request.organization_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invitations can only be resent for approved registrations",
+        )
+
+    invitation_service = get_invitation_service()
+    try:
+        count = await invitation_service.resend_pending_invitations_for_organization(
+            db=db,
+            organization_id=request.organization_id,
+            frontend_url=settings.FRONTEND_URL,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+
+    if count == 0:
+        return OrganizationRegistrationResendInvitationsResponse(
+            invitations_resent=0,
+            message="No pending invitations to resend for this organization",
+        )
+
+    return OrganizationRegistrationResendInvitationsResponse(
+        invitations_resent=count,
+        message=f"{count} invitation email(s) resent for {request.company_name}",
     )
 
 

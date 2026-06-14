@@ -33,6 +33,8 @@ from app.schemas.invitation import (
     InvitationResponse,
     InvitationVerify,
     InvitationAccept,
+    InvitationResendResponse,
+    InvitationsBulkResendResponse,
 )
 from app.schemas.user import UserResponse
 from app.api.dependencies import require_roles, get_current_invitation_user
@@ -748,6 +750,87 @@ async def cancel_invitation(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e)
         )
+
+
+@router.post(
+    "/invitations/{invitation_id}/resend",
+    response_model=InvitationResendResponse,
+)
+async def resend_invitation(
+    invitation_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN)),
+):
+    """Resend a pending invitation with a new link and temporary password (ADMIN only)."""
+    if not current_user.organization_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User is not assigned to an organization",
+        )
+
+    frontend_url = getattr(settings, "FRONTEND_URL", "http://localhost:3000")
+    try:
+        invitation = await invitation_service.resend_invitation(
+            db=db,
+            invitation_id=invitation_id,
+            organization_id=current_user.organization_id,
+            frontend_url=frontend_url,
+        )
+    except PermissionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(exc),
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+
+    return InvitationResendResponse(
+        message=f"Invitation email resent to {invitation.email}",
+        invitation=InvitationResponse.model_validate(invitation),
+    )
+
+
+@router.post(
+    "/invitations/resend-all",
+    response_model=InvitationsBulkResendResponse,
+)
+async def resend_all_invitations(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN)),
+):
+    """Resend all pending invitation emails for the organization (ADMIN only)."""
+    if not current_user.organization_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User is not assigned to an organization",
+        )
+
+    frontend_url = getattr(settings, "FRONTEND_URL", "http://localhost:3000")
+    try:
+        count = await invitation_service.resend_pending_invitations_for_organization(
+            db=db,
+            organization_id=current_user.organization_id,
+            frontend_url=frontend_url,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+
+    if count == 0:
+        return InvitationsBulkResendResponse(
+            message="No pending invitations to resend",
+            invitations_resent=0,
+        )
+
+    return InvitationsBulkResendResponse(
+        message=f"{count} invitation email(s) resent",
+        invitations_resent=count,
+    )
 
 
 # ==================== PUBLIC INVITATION ENDPOINTS ====================

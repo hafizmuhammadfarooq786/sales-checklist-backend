@@ -6,6 +6,7 @@ import boto3
 import logging
 import smtplib
 import ssl
+from datetime import datetime
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from typing import List, Optional, Dict, Any
@@ -292,7 +293,7 @@ class TemplateLoader(BaseLoader):
                     <!-- Footer -->
                     <div class="footer">
                     <div class="footer-copy">
-                        &copy; 2024 {{ project_name }}. All rights reserved.<br />
+                        &copy; {{ current_year }} {{ company_name }}. All rights reserved.<br />
                         Sent to {{ user_email }}
                     </div>
                     <div class="footer-ignore">
@@ -607,7 +608,7 @@ class TemplateLoader(BaseLoader):
                     <!-- Footer -->
                     <div class="footer">
                     <div class="footer-copy">
-                        &copy; 2024 {{ project_name }}. All rights reserved.<br />
+                        &copy; {{ current_year }} {{ company_name }}. All rights reserved.<br />
                         Sent to {{ user_email }}
                     </div>
                     <div class="footer-ignore">
@@ -934,7 +935,7 @@ class TemplateLoader(BaseLoader):
                     <!-- Footer -->
                     <div class="footer">
                     <div class="footer-copy">
-                        &copy; 2024 {{ project_name }}. All rights reserved.<br />
+                        &copy; {{ current_year }} {{ company_name }}. All rights reserved.<br />
                         Sent to {{ user_email }}
                     </div>
                     <div class="footer-right">
@@ -1421,7 +1422,7 @@ class TemplateLoader(BaseLoader):
                     <!-- Footer -->
                     <div class="footer">
                         <div class="footer-copy">
-                            &copy; 2024 {{ project_name }}. All rights reserved.<br />
+                            &copy; {{ current_year }} {{ company_name }}. All rights reserved.<br />
                         </div>
                     </div>
 
@@ -1439,30 +1440,53 @@ class TemplateLoader(BaseLoader):
 
 
 class EmailService:
-    """Amazon SES email service for sending transactional emails"""
+    """Transactional email service (SMTP for local dev, SES for stage/prod)."""
 
     def __init__(self):
-        """Initialize SES client"""
-        self.ses_client = None
         self.env = Environment(loader=TemplateLoader())
+        self.ses_client = None
+        provider = settings.email_provider
+        logger.info("Email provider: %s (ENVIRONMENT=%s)", provider, settings.ENVIRONMENT)
 
-        # Only initialize if we have AWS credentials
-        if settings.AWS_ACCESS_KEY_ID and settings.AWS_SECRET_ACCESS_KEY:
-            try:
-                self.ses_client = boto3.client(
-                    "ses",
-                    region_name=settings.SES_REGION,
-                    aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
-                    aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
+        if provider == "ses":
+            self.ses_client = self._build_ses_client()
+            if not self.ses_client:
+                logger.error(
+                    "SES provider selected but SES client failed to initialize. "
+                    "Set SES_SENDER_EMAIL and ensure AWS credentials or ECS task role."
                 )
-                logger.info(f"SES client initialized for region: {settings.SES_REGION}")
-            except Exception as e:
-                logger.error(f"Failed to initialize SES client: {str(e)}")
-                self.ses_client = None
-        else:
+            elif not settings.SES_SENDER_EMAIL:
+                logger.error(
+                    "SES provider selected but SES_SENDER_EMAIL is not configured."
+                )
+        elif not settings.SMTP_HOST or not settings.SMTP_SENDER_EMAIL:
             logger.warning(
-                "AWS SES credentials not configured. SMTP may be used if configured."
+                "SMTP provider selected but SMTP_HOST/SMTP_SENDER_EMAIL missing."
             )
+
+    @staticmethod
+    def _build_ses_client():
+        """Create SES client using explicit keys or the default AWS credential chain."""
+        try:
+            kwargs: Dict[str, Any] = {"region_name": settings.SES_REGION}
+            if settings.AWS_ACCESS_KEY_ID and settings.AWS_SECRET_ACCESS_KEY:
+                kwargs["aws_access_key_id"] = settings.AWS_ACCESS_KEY_ID
+                kwargs["aws_secret_access_key"] = settings.AWS_SECRET_ACCESS_KEY
+            client = boto3.client("ses", **kwargs)
+            logger.info("SES client initialized for region: %s", settings.SES_REGION)
+            return client
+        except Exception as exc:
+            logger.error("Failed to initialize SES client: %s", exc)
+            return None
+
+    @staticmethod
+    def _template_context(**extra: Any) -> Dict[str, Any]:
+        return {
+            "project_name": settings.PROJECT_NAME,
+            "company_name": settings.EMAIL_COMPANY_NAME,
+            "current_year": datetime.utcnow().year,
+            **extra,
+        }
 
     def _send_email(
         self,
@@ -1472,57 +1496,73 @@ class EmailService:
         text_body: Optional[str] = None,
         reply_to: Optional[str] = None,
     ) -> bool:
-        """
-        Send an email using Amazon SES first; fall back to SMTP if SES isn't configured or fails.
+        """Send email using the configured provider (no cross-provider fallback)."""
+        provider = settings.email_provider
+        if provider == "ses":
+            return self._send_email_via_ses(
+                to_emails=to_emails,
+                subject=subject,
+                html_body=html_body,
+                text_body=text_body,
+                reply_to=reply_to,
+            )
+        if provider == "smtp":
+            return self._send_email_via_smtp(
+                to_emails=to_emails,
+                subject=subject,
+                html_body=html_body,
+                text_body=text_body,
+                reply_to=reply_to,
+            )
+        logger.error("Unknown EMAIL_PROVIDER: %s", provider)
+        return False
 
-        Args:
-            to_emails: List of recipient email addresses
-            subject: Email subject
-            html_body: HTML body content
-            text_body: Plain text body content (optional)
-            reply_to: Reply-to address (optional)
+    def _send_email_via_ses(
+        self,
+        to_emails: List[str],
+        subject: str,
+        html_body: str,
+        text_body: Optional[str] = None,
+        reply_to: Optional[str] = None,
+    ) -> bool:
+        if not self.ses_client or not settings.SES_SENDER_EMAIL:
+            logger.error(
+                "Cannot send via SES: client or SES_SENDER_EMAIL not configured."
+            )
+            return False
 
-        Returns:
-            bool: True if email was sent successfully, False otherwise
-        """
-        # 1) Attempt SES if configured
-        if self.ses_client and settings.SES_SENDER_EMAIL:
-            try:
-                message = {
-                    "Subject": {"Data": subject, "Charset": "UTF-8"},
-                    "Body": {"Html": {"Data": html_body, "Charset": "UTF-8"}},
-                }
-                if text_body:
-                    message["Body"]["Text"] = {"Data": text_body, "Charset": "UTF-8"}
+        try:
+            message = {
+                "Subject": {"Data": subject, "Charset": "UTF-8"},
+                "Body": {"Html": {"Data": html_body, "Charset": "UTF-8"}},
+            }
+            if text_body:
+                message["Body"]["Text"] = {"Data": text_body, "Charset": "UTF-8"}
 
-                response = self.ses_client.send_email(
-                    Source=settings.SES_SENDER_EMAIL,
-                    Destination={"ToAddresses": to_emails},
-                    Message=message,
-                    ReplyToAddresses=[reply_to] if reply_to else [],
-                )
-                message_id = response.get("MessageId")
-                logger.info(f"Email sent via SES successfully. MessageId: {message_id}")
-                return True
-            except ClientError as e:
-                error_code = e.response.get("Error", {}).get("Code")
-                error_message = e.response.get("Error", {}).get("Message")
-                logger.error(
-                    f"AWS SES ClientError [{error_code}]: {error_message}. Falling back to SMTP."
-                )
-            except BotoCoreError as e:
-                logger.error(f"AWS SES BotoCoreError: {str(e)}. Falling back to SMTP.")
-            except Exception as e:
-                logger.error(f"Unexpected SES error: {str(e)}. Falling back to SMTP.")
-
-        # 2) SMTP fallback
-        return self._send_email_via_smtp(
-            to_emails=to_emails,
-            subject=subject,
-            html_body=html_body,
-            text_body=text_body,
-            reply_to=reply_to,
-        )
+            response = self.ses_client.send_email(
+                Source=settings.SES_SENDER_EMAIL,
+                Destination={"ToAddresses": to_emails},
+                Message=message,
+                ReplyToAddresses=[reply_to] if reply_to else [],
+            )
+            message_id = response.get("MessageId")
+            logger.info(
+                "Email sent via SES to %s (MessageId: %s)", to_emails, message_id
+            )
+            return True
+        except ClientError as exc:
+            error_code = exc.response.get("Error", {}).get("Code")
+            error_message = exc.response.get("Error", {}).get("Message")
+            logger.error(
+                "AWS SES ClientError [%s]: %s", error_code, error_message
+            )
+            return False
+        except BotoCoreError as exc:
+            logger.error("AWS SES BotoCoreError: %s", exc)
+            return False
+        except Exception as exc:
+            logger.error("Unexpected SES error: %s", exc)
+            return False
 
     def _send_email_via_smtp(
         self,
@@ -1533,9 +1573,7 @@ class EmailService:
         reply_to: Optional[str] = None,
     ) -> bool:
         """
-        Send an email using SMTP.
-
-        Expected env vars (see app/core/config.py):
+        Send an email using SMTP (local development only).
         - SMTP_HOST
         - SMTP_PORT
         - SMTP_USERNAME (optional)
@@ -1614,10 +1652,11 @@ class EmailService:
 
         template = self.env.get_template("email_verification")
         html_content = template.render(
-            user_name=user_name,
-            user_email=user_email,
-            verification_url=verification_url,
-            project_name=settings.PROJECT_NAME,
+            **self._template_context(
+                user_name=user_name,
+                user_email=user_email,
+                verification_url=verification_url,
+            )
         )
 
         subject = f"Verify Your Email - {settings.PROJECT_NAME}"
@@ -1650,10 +1689,11 @@ class EmailService:
 
         template = self.env.get_template("password_reset")
         html_content = template.render(
-            user_name=user_name,
-            user_email=user_email,
-            reset_url=reset_url,
-            project_name=settings.PROJECT_NAME,
+            **self._template_context(
+                user_name=user_name,
+                user_email=user_email,
+                reset_url=reset_url,
+            )
         )
 
         subject = f"Reset Your Password - {settings.PROJECT_NAME}"
@@ -1683,10 +1723,11 @@ class EmailService:
 
         template = self.env.get_template("welcome")
         html_content = template.render(
-            user_name=user_name,
-            user_email=user_email,
-            dashboard_url=resolved_dashboard_url,
-            project_name=settings.PROJECT_NAME,
+            **self._template_context(
+                user_name=user_name,
+                user_email=user_email,
+                dashboard_url=resolved_dashboard_url,
+            )
         )
 
         subject = f"Welcome to {settings.PROJECT_NAME}!"
@@ -1716,6 +1757,7 @@ class EmailService:
         """
         greeting = f"Hello {user_name}," if user_name else "Hello,"
 
+        year = datetime.utcnow().year
         html_content = f"""
         <!DOCTYPE html>
         <html>
@@ -1737,7 +1779,7 @@ class EmailService:
                 <p>Best regards,<br>The {settings.PROJECT_NAME} Team</p>
             </div>
             <div class="footer">
-                <p>&copy; 2024 {settings.PROJECT_NAME}. All rights reserved.</p>
+                <p>&copy; {year} {settings.EMAIL_COMPANY_NAME}. All rights reserved.</p>
             </div>
         </body>
         </html>
@@ -1796,14 +1838,15 @@ class EmailService:
         """
         template = self.env.get_template("invitation")
         html_content = template.render(
-            user_email=to_email,
-            organization_name=organization_name,
-            inviter_name=inviter_name,
-            invite_url=invite_url,
-            role=role,
-            team_name=team_name or "No team assigned",
-            temp_password=temp_password,
-            project_name=settings.PROJECT_NAME,
+            **self._template_context(
+                user_email=to_email,
+                organization_name=organization_name,
+                inviter_name=inviter_name,
+                invite_url=invite_url,
+                role=role,
+                team_name=team_name or "No team assigned",
+                temp_password=temp_password,
+            )
         )
 
         subject = (

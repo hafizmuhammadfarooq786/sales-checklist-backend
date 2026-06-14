@@ -11,6 +11,28 @@ PHONE_DIGIT_COUNT = 10
 PHONE_FORMATTED_PATTERN = re.compile(r"^\(\d{3}\) \d{3}-\d{4}$")
 
 
+def _strip_leading_country_code(digits: str) -> str:
+    if (
+        digits.startswith("1")
+        and len(digits) >= 2
+        and "2" <= digits[1] <= "9"
+    ):
+        return digits[1:]
+    return digits
+
+
+def normalize_us_phone_digits(value: str) -> str:
+    """Strip optional US country code (+1) and cap at 10 NANP digits."""
+    digits = re.sub(r"\D", "", value)
+    digits = _strip_leading_country_code(digits)
+    while len(digits) > PHONE_DIGIT_COUNT:
+        stripped = _strip_leading_country_code(digits)
+        if stripped == digits:
+            break
+        digits = stripped
+    return digits[:PHONE_DIGIT_COUNT]
+
+
 @lru_cache(maxsize=1)
 def _load_us_geographic_area_codes() -> frozenset[str]:
     data_path = Path(__file__).resolve().parent.parent / "data" / "us_geographic_area_codes.json"
@@ -60,10 +82,7 @@ def validate_us_phone_value(value: Optional[str], *, required: bool = False) -> 
     if not cleaned:
         return "Phone number is required" if required else None
 
-    digits = re.sub(r"\D", "", cleaned)
-    if len(digits) == 11 and digits.startswith("1"):
-        digits = digits[1:]
-
+    digits = normalize_us_phone_digits(cleaned)
     if PHONE_FORMATTED_PATTERN.match(cleaned):
         pass
     elif len(digits) == PHONE_DIGIT_COUNT:

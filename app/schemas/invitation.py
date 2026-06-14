@@ -100,3 +100,13 @@ class InvitationVerify(BaseModel):
     team_name: Optional[str]
     role: str
     expires_at: datetime
+
+
+class InvitationResendResponse(BaseModel):
+    message: str
+    invitation: InvitationResponse
+
+
+class InvitationsBulkResendResponse(BaseModel):
+    message: str
+    invitations_resent: int
