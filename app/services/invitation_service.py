@@ -7,13 +7,23 @@ import string
 from datetime import datetime, timedelta
 from typing import Optional, Dict
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import exists, func, select
 from sqlalchemy.orm import selectinload
 
 from app.models.invitation import Invitation
 from app.models.user import User, UserRole, Organization, Team
 from app.services.email_service import get_email_service
 from app.services.auth_service import auth_service
+
+
+def exclude_users_with_pending_invitations(organization_id: int, user_email_column):
+    """Users with an active, unaccepted invitation belong on Pending Invitations only."""
+    return ~exists().where(
+        Invitation.organization_id == organization_id,
+        Invitation.accepted_at.is_(None),
+        Invitation.expires_at > datetime.utcnow(),
+        func.lower(Invitation.email) == func.lower(user_email_column),
+    )
 
 
 class InvitationService:
@@ -67,6 +77,7 @@ class InvitationService:
         frontend_url: str = "http://localhost:3000",
         first_name: Optional[str] = None,
         last_name: Optional[str] = None,
+        job_title: Optional[str] = None,
         direct_dial: Optional[str] = None,
         cell_phone: Optional[str] = None,
         auto_commit: bool = True,
@@ -125,13 +136,14 @@ class InvitationService:
             password_hash=auth_service.hash_password(temp_password),
             first_name=(first_name or "").strip() or None,
             last_name=(last_name or "").strip() or None,
+            job_title=(job_title or "").strip() or None,
             direct_dial=(direct_dial or "").strip() or None,
             cell_phone=(cell_phone or "").strip() or None,
             organization_id=organization_id,
             team_id=team_id,
             role=user_role,
             is_active=True,
-            is_verified=True,  # Trusted invite flow: treat invited email as verified
+            is_verified=False,  # Verified when the invite is accepted
             must_change_password=True  # Force password change on first login
         )
         db.add(new_user)
@@ -166,6 +178,8 @@ class InvitationService:
         invitation: Invitation,
         temp_password: str,
         frontend_url: str,
+        *,
+        is_resend: bool = False,
     ) -> None:
         org_result = await db.execute(
             select(Organization).where(Organization.id == invitation.organization_id)
@@ -200,6 +214,7 @@ class InvitationService:
             role=invitation.role,
             team_name=team_name,
             temp_password=temp_password,
+            is_resend=is_resend,
         )
         if not email_sent:
             raise ValueError(f"Failed to send invitation email to {invitation.email}")
@@ -242,7 +257,7 @@ class InvitationService:
         invitation.expires_at = datetime.utcnow() + timedelta(days=self.token_expiry_days)
 
         await self._send_invitation_email_for_record(
-            db, invitation, temp_password, frontend_url
+            db, invitation, temp_password, frontend_url, is_resend=True
         )
         await db.commit()
         await db.refresh(invitation)

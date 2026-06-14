@@ -56,6 +56,7 @@ class User(Base, TimestampMixin):
     password_hash = Column(String(255), nullable=False)
     first_name = Column(String(100), nullable=True)
     last_name = Column(String(100), nullable=True)
+    job_title = Column(String(150), nullable=True)
     direct_dial = Column(String(50), nullable=True)
     cell_phone = Column(String(50), nullable=True)
 
