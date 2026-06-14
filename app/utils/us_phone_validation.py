@@ -34,8 +34,9 @@ def normalize_us_phone_digits(value: str) -> str:
 
 
 @lru_cache(maxsize=1)
-def _load_us_geographic_area_codes() -> frozenset[str]:
-    data_path = Path(__file__).resolve().parent.parent / "data" / "us_geographic_area_codes.json"
+def _load_us_area_codes() -> frozenset[str]:
+    """Area codes from us-area-codes (NANP geographic assignments)."""
+    data_path = Path(__file__).resolve().parent.parent / "data" / "us_area_codes.json"
     with data_path.open(encoding="utf-8") as handle:
         codes = json.load(handle)
     return frozenset(str(code) for code in codes)
@@ -63,7 +64,7 @@ def validate_us_phone_digits(digits: str) -> Optional[str]:
 
     if not _valid_nanp_nxx(area):
         return "Area code format is invalid"
-    if area not in _load_us_geographic_area_codes():
+    if area not in _load_us_area_codes():
         return "Enter a valid US area code"
     if not _valid_nanp_nxx(exchange):
         return "Phone number prefix is invalid"

@@ -5,6 +5,7 @@ from typing import List, Optional
 from pydantic import BaseModel, EmailStr, Field, ValidationInfo, field_validator
 
 from app.schemas.organization import INDUSTRY_OPTIONS, _validate_phone_optional
+from app.utils.email_validation import validate_email_address
 from app.models.organization_registration import RegistrationStatus
 
 
@@ -15,6 +16,13 @@ class SignupUserRow(BaseModel):
     role: str = Field(..., pattern="^(rep|manager)$")
     direct_dial: str = Field(..., max_length=50)
     cell_phone: Optional[str] = Field(None, max_length=50)
+
+    @field_validator("email", mode="before")
+    @classmethod
+    def validate_email(cls, value: str) -> str:
+        result = validate_email_address(value, required=True)
+        assert result is not None
+        return result
 
     @field_validator("role", mode="before")
     @classmethod
@@ -44,6 +52,13 @@ class OrganizationRegistrationCreate(BaseModel):
     admin_direct_dial: str = Field(..., max_length=50)
     admin_cell_phone: Optional[str] = Field(None, max_length=50)
     additional_users: List[SignupUserRow] = Field(default_factory=list)
+
+    @field_validator("admin_email", mode="before")
+    @classmethod
+    def validate_admin_email(cls, value: str) -> str:
+        result = validate_email_address(value, required=True)
+        assert result is not None
+        return result
 
     @field_validator("industry", mode="before")
     @classmethod

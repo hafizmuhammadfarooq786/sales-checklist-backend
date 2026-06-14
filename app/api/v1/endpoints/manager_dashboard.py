@@ -21,6 +21,7 @@ from app.services.risk_band_service import (
     AT_RISK_MAX_SCORE,
     HEALTHY_MIN_SCORE,
 )
+from app.services.invitation_service import exclude_users_with_pending_invitations
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -153,16 +154,26 @@ async def get_team_members(user: User, db: AsyncSession) -> List[int]:
         return [row[0] for row in result.all()]
 
     elif user.role == UserRole.ADMIN:
-        # Org admin sees all users in their organization
+        # Org admin dashboard: managers and reps only (not the executive sponsor)
         result = await db.execute(
-            select(User.id).where(User.organization_id == user.organization_id)
+            select(User.id).where(
+                User.organization_id == user.organization_id,
+                User.deleted_at.is_(None),
+                User.role.in_([UserRole.MANAGER, UserRole.REP]),
+                exclude_users_with_pending_invitations(user.organization_id, User.email),
+            )
         )
         return [row[0] for row in result.all()]
 
     elif user.role == UserRole.MANAGER:
-        # Manager sees users in their team
+        # Manager sees managers and reps on their team (not org admin)
         result = await db.execute(
-            select(User.id).where(User.team_id == user.team_id)
+            select(User.id).where(
+                User.team_id == user.team_id,
+                User.deleted_at.is_(None),
+                User.role.in_([UserRole.MANAGER, UserRole.REP]),
+                exclude_users_with_pending_invitations(user.organization_id, User.email),
+            )
         )
         return [row[0] for row in result.all()]
 

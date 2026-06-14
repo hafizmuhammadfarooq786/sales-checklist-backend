@@ -38,7 +38,10 @@ from app.schemas.invitation import (
 )
 from app.schemas.user import UserResponse
 from app.api.dependencies import require_roles, get_current_invitation_user
-from app.services.invitation_service import get_invitation_service
+from app.services.invitation_service import (
+    get_invitation_service,
+    exclude_users_with_pending_invitations,
+)
 from app.services.s3_service import get_s3_service
 from app.services.org_logo_service import (
     guess_logo_content_type,
@@ -544,7 +547,12 @@ async def list_organization_users(
     ).where(
         User.organization_id == current_user.organization_id,
         User.deleted_at.is_(None),  # Exclude soft-deleted users
-        User.is_verified.is_(True)  # Only show accepted (verified) members
+        User.is_verified.is_(True),  # Only show accepted (verified) members
+        exclude_users_with_pending_invitations(
+            current_user.organization_id, User.email
+        ),
+        # Org admin (executive sponsor) is not a team member — managers and reps only
+        User.role.in_([UserRole.MANAGER, UserRole.REP]),
     )
 
     # Apply RBAC - MANAGER can only see their team
@@ -602,6 +610,9 @@ async def get_organization_user_summary(
         User.organization_id == current_user.organization_id,
         User.deleted_at.is_(None),
         User.is_verified.is_(True),
+        exclude_users_with_pending_invitations(
+            current_user.organization_id, User.email
+        ),
     )
 
     async def _count(role: UserRole) -> int:
@@ -610,11 +621,12 @@ async def get_organization_user_summary(
         )
         return int(result.scalar() or 0)
 
-    executives = await _count(UserRole.ADMIN)
+    executives = await _count(UserRole.EXECUTIVE)
     managers = await _count(UserRole.MANAGER)
     salespeople = await _count(UserRole.REP)
     administrators = await _count(UserRole.ADMIN)
-    total = executives + managers + salespeople + administrators
+    # Team members only (excludes org admin / executive sponsor)
+    total = managers + salespeople
 
     return UserRoleSummary(
         executives=executives,
@@ -672,6 +684,7 @@ async def send_invitation(
             frontend_url=frontend_url,
             first_name=invitation_data.first_name,
             last_name=invitation_data.last_name,
+            job_title=invitation_data.job_title,
             direct_dial=invitation_data.direct_dial,
             cell_phone=invitation_data.cell_phone,
         )

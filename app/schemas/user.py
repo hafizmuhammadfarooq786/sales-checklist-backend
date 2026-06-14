@@ -12,6 +12,7 @@ class UserBase(BaseModel):
     email: EmailStr
     first_name: Optional[str] = None
     last_name: Optional[str] = None
+    job_title: Optional[str] = Field(None, max_length=150)
     direct_dial: Optional[str] = Field(None, max_length=50)
     cell_phone: Optional[str] = Field(None, max_length=50)
 
@@ -26,6 +27,7 @@ class UserUpdate(BaseModel):
     """Schema for updating a user"""
     first_name: Optional[str] = None
     last_name: Optional[str] = None
+    job_title: Optional[str] = Field(None, max_length=150)
     direct_dial: Optional[str] = Field(None, max_length=50)
     cell_phone: Optional[str] = Field(None, max_length=50)
     role: Optional[UserRole] = None
@@ -37,6 +39,7 @@ class UserSelfUpdate(BaseModel):
     """Schema for self-service profile updates (safe fields only)"""
     first_name: Optional[str] = None
     last_name: Optional[str] = None
+    job_title: Optional[str] = Field(None, max_length=150)
     direct_dial: Optional[str] = Field(None, max_length=50)
     cell_phone: Optional[str] = Field(None, max_length=50)
 
