@@ -13,6 +13,7 @@ class Settings(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         case_sensitive=True,
+        extra="ignore",  # allow legacy .env keys (e.g. removed SENTRY_DSN) without failing startup
     )
 
     # App
@@ -71,6 +72,8 @@ class Settings(BaseSettings):
     # When True, transcription runs in a Celery worker (requires Redis + worker process).
     # When False or broker unavailable, upload/transcribe endpoints fall back to BackgroundTasks.
     USE_CELERY_FOR_TRANSCRIPTION: bool = Field(default=False)
+    # When True, transactional email is enqueued on the Celery worker (stage/prod).
+    USE_CELERY_FOR_EMAIL: str = Field(default="auto")
 
     # CORS
     ALLOWED_ORIGINS: List[str] = Field(
@@ -95,9 +98,6 @@ class Settings(BaseSettings):
     # Audio Compression Recommendations (for frontend documentation)
     RECOMMENDED_AUDIO_BITRATE: str = "64k"
     RECOMMENDED_AUDIO_SAMPLE_RATE: int = 22050
-
-    # Sentry
-    SENTRY_DSN: str = Field(default="")
 
     # Email (Amazon SES)
     SES_REGION: str = Field(default="us-east-2")
@@ -128,6 +128,18 @@ class Settings(BaseSettings):
         if env in ("production", "prod", "staging", "stage"):
             return "ses"
         return "smtp"
+
+
+    @property
+    def use_celery_for_email(self) -> bool:
+        """Enqueue email on Celery worker for stage/prod; inline send for local dev."""
+        explicit = (self.USE_CELERY_FOR_EMAIL or "auto").strip().lower()
+        if explicit in ("true", "1", "yes"):
+            return True
+        if explicit in ("false", "0", "no"):
+            return False
+        env = (self.ENVIRONMENT or "development").strip().lower()
+        return env in ("production", "prod", "staging", "stage")
 
 
 settings = Settings()

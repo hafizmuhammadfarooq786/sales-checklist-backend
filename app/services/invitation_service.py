@@ -12,7 +12,7 @@ from sqlalchemy.orm import selectinload
 
 from app.models.invitation import Invitation
 from app.models.user import User, UserRole, Organization, Team
-from app.services.email_service import get_email_service
+from app.services.email_dispatch import dispatch_organization_invitation_email
 from app.services.auth_service import auth_service
 
 
@@ -30,7 +30,6 @@ class InvitationService:
     """Service for managing user invitations"""
 
     def __init__(self):
-        self.email_service = get_email_service()
         self.token_expiry_days = 7  # Invitations expire after 7 days
 
     def generate_token(self) -> str:
@@ -206,7 +205,7 @@ class InvitationService:
                 team_name = team.name
 
         invite_url = f"{frontend_url}/accept-invite?token={invitation.token}"
-        email_sent = await self.email_service.send_invitation_email(
+        email_sent = await dispatch_organization_invitation_email(
             to_email=invitation.email,
             organization_name=organization.name,
             inviter_name=inviter_name,

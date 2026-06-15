@@ -12,7 +12,11 @@ from app.schemas.user import (
     PasswordChange
 )
 from app.services.auth_service import auth_service
-from app.services.email_service import email_service
+from app.services.email_dispatch import (
+    dispatch_password_reset_email,
+    dispatch_verification_email,
+    dispatch_welcome_email,
+)
 from app.api.dependencies import get_current_active_user
 from app.core.config import settings
 from app.models.user import UserRole
@@ -128,7 +132,7 @@ async def verify_email(
     # Send welcome email after successful verification
     try:
         user_name = f"{user.first_name or ''} {user.last_name or ''}".strip() or user.email
-        email_sent = email_service.send_welcome_email(
+        email_sent = await dispatch_welcome_email(
             user_email=user.email,
             user_name=user_name
         )
@@ -162,7 +166,7 @@ async def resend_verification_email(
             
             if user and user.email_verification_token:
                 user_name = f"{user.first_name or ''} {user.last_name or ''}".strip() or user.email
-                email_sent = email_service.send_verification_email(
+                email_sent = await dispatch_verification_email(
                     user_email=user.email,
                     user_name=user_name,
                     verification_token=user.email_verification_token
@@ -193,7 +197,7 @@ async def forgot_password(
     if user and user.password_reset_token:
         try:
             user_name = f"{user.first_name or ''} {user.last_name or ''}".strip() or user.email
-            email_sent = email_service.send_password_reset_email(
+            email_sent = await dispatch_password_reset_email(
                 user_email=user.email,
                 user_name=user_name,
                 reset_token=user.password_reset_token

@@ -11,7 +11,7 @@ from passlib.context import CryptContext
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_
 from sqlalchemy.orm import selectinload
-from app.services.email_service import email_service
+from app.services.email_dispatch import dispatch_verification_email
 from fastapi import HTTPException, status
 from app.core.config import settings
 from app.models.user import User
@@ -142,7 +142,7 @@ class AuthService:
                     f"{user.first_name or ''} {user.last_name or ''}".strip()
                     or user.email
                 )
-                email_sent = email_service.send_verification_email(
+                email_sent = await dispatch_verification_email(
                     user_email=user.email,
                     user_name=user_name,
                     verification_token=user.email_verification_token,

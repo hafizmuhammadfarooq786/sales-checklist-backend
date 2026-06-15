@@ -5,7 +5,7 @@ import logging
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import List, Optional
+from typing import Optional
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,7 +18,7 @@ from app.models.organization_registration import (
 )
 from app.models.user import UserRole
 from app.schemas.organization_registration import OrganizationRegistrationCreate
-from app.services.email_service import get_email_service
+from app.services.email_dispatch import dispatch_notification_email
 from app.services.invitation_service import get_invitation_service
 from app.services.s3_service import get_s3_service
 
@@ -69,8 +69,7 @@ class OrganizationRegistrationService:
         await db.commit()
         await db.refresh(request)
 
-        email_service = get_email_service()
-        email_service.send_notification_email(
+        await dispatch_notification_email(
             to_emails=[admin_email],
             subject=f"We received your {settings.PROJECT_NAME} registration",
             message=(
@@ -175,9 +174,9 @@ class OrganizationRegistrationService:
         await db.commit()
         await db.refresh(request)
 
-        get_email_service().send_notification_email(
+        await dispatch_notification_email(
             to_emails=[admin_email],
-            subject=f"Your organization registration was approved",
+            subject="Your organization registration was approved",
             message=(
                 f"<strong>{request.company_name}</strong> has been approved on "
                 f"{settings.PROJECT_NAME}. Check your inbox for an invitation email with "
@@ -212,7 +211,7 @@ class OrganizationRegistrationService:
         if request.rejection_reason:
             message += f"<br><br>Reason: {request.rejection_reason}"
 
-        get_email_service().send_notification_email(
+        await dispatch_notification_email(
             to_emails=[request.admin_email],
             subject="Your organization registration update",
             message=message,
@@ -343,11 +342,10 @@ class OrganizationRegistrationService:
             return
 
         review_url = f"{settings.FRONTEND_URL.rstrip('/')}/admin/registrations"
-        email_service = get_email_service()
         for admin in admins:
             if not admin.email:
                 continue
-            email_service.send_notification_email(
+            await dispatch_notification_email(
                 to_emails=[admin.email],
                 subject=f"New organization registration: {request.company_name}",
                 message=(

@@ -7,7 +7,6 @@ from typing import Optional, Dict, Any, List
 from pydantic import BaseModel, EmailStr, Field, field_validator
 import re
 
-from app.models.user import UserRole
 from app.utils.us_phone_validation import validate_us_phone_value
 
 PHONE_PATTERN = re.compile(r"^[\d\s+\-().extEXT#]{7,30}$")

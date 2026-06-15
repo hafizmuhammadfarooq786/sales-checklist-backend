@@ -2,6 +2,7 @@
 Amazon SES Email Service
 """
 
+import asyncio
 import boto3
 import logging
 import smtplib
@@ -108,6 +109,22 @@ class EmailService:
             )
         logger.error("Unknown EMAIL_PROVIDER: %s", provider)
         return False
+
+    async def _send_in_thread(self, send_fn, *args, **kwargs) -> bool:
+        """Run blocking SMTP/SES I/O in a thread pool from async endpoints."""
+        return await asyncio.to_thread(send_fn, *args, **kwargs)
+
+    async def send_verification_email_async(self, **kwargs) -> bool:
+        return await self._send_in_thread(self.send_verification_email, **kwargs)
+
+    async def send_password_reset_email_async(self, **kwargs) -> bool:
+        return await self._send_in_thread(self.send_password_reset_email, **kwargs)
+
+    async def send_welcome_email_async(self, **kwargs) -> bool:
+        return await self._send_in_thread(self.send_welcome_email, **kwargs)
+
+    async def send_notification_email_async(self, **kwargs) -> bool:
+        return await self._send_in_thread(self.send_notification_email, **kwargs)
 
     def _send_email_via_ses(
         self,
@@ -422,7 +439,7 @@ class EmailService:
             logger.error(f"Failed to verify email {email}: {str(e)}")
             return False
 
-    async def send_invitation_email(
+    def render_invitation_email(
         self,
         to_email: str,
         organization_name: str,
@@ -433,22 +450,8 @@ class EmailService:
         temp_password: Optional[str] = None,
         *,
         is_resend: bool = False,
-    ) -> bool:
-        """
-        Send organization invitation email with temporary password
-
-        Args:
-            to_email: Email address to send invitation to
-            organization_name: Name of the organization
-            inviter_name: Name of person sending invitation
-            invite_url: URL to accept invitation
-            role: User role (rep, manager, admin)
-            team_name: Optional team name
-            temp_password: Temporary password for initial login
-
-        Returns:
-            bool: True if email was sent successfully
-        """
+    ) -> Dict[str, Any]:
+        """Build invitation email content (no network I/O)."""
         template = self.env.get_template("invitation")
         html_content = template.render(
             **self._template_context(
@@ -483,11 +486,57 @@ class EmailService:
                 f"You will be asked to set a new password after signing in.\n"
             )
 
-        return self._send_email(
-            to_emails=[to_email],
-            subject=subject,
-            html_body=html_content,
-            text_body=text_body,
+        return {
+            "to_email": to_email,
+            "subject": subject,
+            "html_body": html_content,
+            "text_body": text_body,
+        }
+
+    async def send_invitation_email(
+        self,
+        to_email: str,
+        organization_name: str,
+        inviter_name: str,
+        invite_url: str,
+        role: str,
+        team_name: Optional[str] = None,
+        temp_password: Optional[str] = None,
+        *,
+        is_resend: bool = False,
+    ) -> bool:
+        """
+        Send organization invitation email with temporary password
+
+        Args:
+            to_email: Email address to send invitation to
+            organization_name: Name of the organization
+            inviter_name: Name of person sending invitation
+            invite_url: URL to accept invitation
+            role: User role (rep, manager, admin)
+            team_name: Optional team name
+            temp_password: Temporary password for initial login
+
+        Returns:
+            bool: True if email was sent successfully
+        """
+        rendered = self.render_invitation_email(
+            to_email=to_email,
+            organization_name=organization_name,
+            inviter_name=inviter_name,
+            invite_url=invite_url,
+            role=role,
+            team_name=team_name,
+            temp_password=temp_password,
+            is_resend=is_resend,
+        )
+
+        return await self._send_in_thread(
+            self._send_email,
+            to_emails=[rendered["to_email"]],
+            subject=rendered["subject"],
+            html_body=rendered["html_body"],
+            text_body=rendered["text_body"],
         )
 
     def get_send_quota(self) -> Dict[str, Any]:
