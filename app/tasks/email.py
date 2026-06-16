@@ -62,6 +62,31 @@ def send_notification_email_task(self, payload: Dict[str, Any]) -> bool:
         raise self.retry(exc=exc)
 
 
+@celery_app.task(
+    name="email.send_registration_approved",
+    bind=True,
+    max_retries=3,
+    default_retry_delay=60,
+)
+def send_registration_approved_email_task(self, payload: Dict[str, Any]) -> bool:
+    try:
+        service = get_email_service()
+        ok = service._send_email(
+            to_emails=[payload["to_email"]],
+            subject=payload["subject"],
+            html_body=payload["html_body"],
+            text_body=payload.get("text_body"),
+        )
+        if not ok:
+            raise RuntimeError(
+                f"Registration approved email not sent to {payload.get('to_email')}"
+            )
+        return ok
+    except Exception as exc:
+        logger.exception("Registration approved email task failed")
+        raise self.retry(exc=exc)
+
+
 @celery_app.task(name="email.send_invitation", bind=True, max_retries=3, default_retry_delay=60)
 def send_invitation_email_task(self, payload: Dict[str, Any]) -> bool:
     try:

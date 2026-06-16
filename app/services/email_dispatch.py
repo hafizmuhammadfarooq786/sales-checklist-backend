@@ -124,6 +124,34 @@ async def dispatch_notification_email(
     )
 
 
+async def dispatch_registration_approved_email(
+    *,
+    to_email: str,
+    user_name: str,
+    organization_name: str,
+    approver_name: str,
+    temp_password: str,
+    sign_in_url: str,
+) -> bool:
+    service = get_email_service()
+    rendered = service.render_registration_approved_email(
+        to_email=to_email,
+        user_name=user_name,
+        organization_name=organization_name,
+        approver_name=approver_name,
+        temp_password=temp_password,
+        sign_in_url=sign_in_url,
+    )
+    from app.tasks.email import send_registration_approved_email_task
+
+    return await _dispatch(
+        task=send_registration_approved_email_task,
+        payload=rendered,
+        recipients=to_email,
+        inline_send=lambda: service.send_registration_approved_email_async(rendered),
+    )
+
+
 async def dispatch_organization_invitation_email(
     *,
     to_email: str,

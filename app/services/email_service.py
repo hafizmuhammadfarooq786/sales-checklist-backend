@@ -439,6 +439,57 @@ class EmailService:
             logger.error(f"Failed to verify email {email}: {str(e)}")
             return False
 
+    def render_registration_approved_email(
+        self,
+        *,
+        to_email: str,
+        user_name: str,
+        organization_name: str,
+        approver_name: str,
+        temp_password: str,
+        sign_in_url: str,
+    ) -> Dict[str, Any]:
+        """Build org registration approval email with credentials (no network I/O)."""
+        template = self.env.get_template("registration_approved")
+        html_content = template.render(
+            **self._template_context(
+                user_email=to_email,
+                user_name=user_name,
+                organization_name=organization_name,
+                approver_name=approver_name,
+                temp_password=temp_password,
+                sign_in_url=sign_in_url,
+            )
+        )
+
+        subject = (
+            f"Your organization registration was approved — {settings.PROJECT_NAME}"
+        )
+        text_body = (
+            f"{approver_name} approved your registration for {organization_name} "
+            f"on {settings.PROJECT_NAME}.\n\n"
+            f"Sign in: {sign_in_url}\n\n"
+            f"Email: {to_email}\n"
+            f"Temporary password: {temp_password}\n\n"
+            f"You will be asked to set a new password after signing in.\n"
+        )
+
+        return {
+            "to_email": to_email,
+            "subject": subject,
+            "html_body": html_content,
+            "text_body": text_body,
+        }
+
+    async def send_registration_approved_email_async(self, rendered: Dict[str, Any]) -> bool:
+        return await self._send_in_thread(
+            self._send_email,
+            to_emails=[rendered["to_email"]],
+            subject=rendered["subject"],
+            html_body=rendered["html_body"],
+            text_body=rendered.get("text_body"),
+        )
+
     def render_invitation_email(
         self,
         to_email: str,

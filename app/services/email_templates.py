@@ -545,6 +545,118 @@ EMAIL_TEMPLATES = {
 </div>
 """,
     ),
+    "registration_approved": _shell(
+        "Registration approved — {{ project_name }}",
+        """
+<div class="email-wrapper">
+  <div class="pre-header">
+    <table class="pre-header-table" role="presentation">
+      <tr>
+        <td><span class="wordmark">{{ project_name }}</span></td>
+        <td align="right"><span class="badge badge-strong">Approved</span></td>
+      </tr>
+    </table>
+  </div>
+
+  <div class="card">
+    <div class="header">
+      <div class="header-accent"></div>
+      <div class="header-eyebrow">Organization approved</div>
+      <h1><span class="accent">{{ organization_name }}</span> is ready</h1>
+      <p class="header-sub">Your registration on {{ project_name }} has been approved.</p>
+    </div>
+    <div class="content">
+      <p class="intro-text">
+        Hello <strong>{{ user_name }}</strong>,
+        <strong>{{ approver_name }}</strong> has approved your organization registration.
+        Use the credentials below to sign in and set up your team.
+      </p>
+
+      <div class="details-grid">
+        <div class="detail-cell">
+          <div class="detail-label">Organization</div>
+          <div class="detail-value">{{ organization_name }}</div>
+        </div>
+        <div class="detail-cell">
+          <div class="detail-label">Your role</div>
+          <div class="detail-value"><span class="role-pill">Admin</span></div>
+        </div>
+      </div>
+
+      <div class="section-label">Your login credentials</div>
+      <table class="creds-box" role="presentation" width="100%" cellpadding="0" cellspacing="0" bgcolor="#e5f1fd" style="background-color:#e5f1fd;border:1px solid #b8d4f8;border-radius:8px;">
+        <tr>
+          <td style="padding:18px 20px;">
+            <div class="cred-row">
+              <span class="cred-key">Email</span>
+              <span class="cred-value" style="color:#0b1220;text-decoration:none;">{{ user_email }}</span>
+            </div>
+            <div class="cred-row">
+              <span class="cred-key">Temporary password</span>
+              <span class="cred-value cred-password" style="color:#0b1220;">{{ temp_password }}</span>
+            </div>
+          </td>
+        </tr>
+      </table>
+
+      <div class="notice">
+        <div class="notice-text">
+          This is a temporary password. You will be prompted to set a new password after signing in.
+        </div>
+      </div>
+
+      <div class="cta-section">
+        <a href="{{ sign_in_url }}" class="cta-button">Sign in &rarr;</a>
+      </div>
+
+      <div class="section-label">What to do next</div>
+      <table class="steps-table" role="presentation" width="100%" cellpadding="0" cellspacing="0">
+        <tr class="step-row">
+          <td class="step-num-cell" width="36" valign="middle">
+            <table role="presentation" width="28" height="28" cellpadding="0" cellspacing="0" border="0" bgcolor="#e5f1fd" style="width:28px;height:28px;background-color:#e5f1fd;border-radius:6px;">
+              <tr>
+                <td width="28" height="28" align="center" valign="middle" bgcolor="#e5f1fd" style="width:28px;height:28px;background-color:#e5f1fd;color:#0550c3;font-size:13px;font-weight:700;font-family:Arial,Helvetica,sans-serif;text-align:center;vertical-align:middle;border-radius:6px;">1</td>
+              </tr>
+            </table>
+          </td>
+          <td class="step-text" valign="middle">Sign in with your email and temporary password</td>
+        </tr>
+        <tr class="step-row">
+          <td class="step-num-cell" width="36" valign="middle">
+            <table role="presentation" width="28" height="28" cellpadding="0" cellspacing="0" border="0" bgcolor="#e5f1fd" style="width:28px;height:28px;background-color:#e5f1fd;border-radius:6px;">
+              <tr>
+                <td width="28" height="28" align="center" valign="middle" bgcolor="#e5f1fd" style="width:28px;height:28px;background-color:#e5f1fd;color:#0550c3;font-size:13px;font-weight:700;font-family:Arial,Helvetica,sans-serif;text-align:center;vertical-align:middle;border-radius:6px;">2</td>
+              </tr>
+            </table>
+          </td>
+          <td class="step-text" valign="middle">Set a new password when prompted</td>
+        </tr>
+        <tr class="step-row">
+          <td class="step-num-cell" width="36" valign="middle">
+            <table role="presentation" width="28" height="28" cellpadding="0" cellspacing="0" border="0" bgcolor="#e5f1fd" style="width:28px;height:28px;background-color:#e5f1fd;border-radius:6px;">
+              <tr>
+                <td width="28" height="28" align="center" valign="middle" bgcolor="#e5f1fd" style="width:28px;height:28px;background-color:#e5f1fd;color:#0550c3;font-size:13px;font-weight:700;font-family:Arial,Helvetica,sans-serif;text-align:center;vertical-align:middle;border-radius:6px;">3</td>
+              </tr>
+            </table>
+          </td>
+          <td class="step-text" valign="middle">Invite managers and reps from your organization settings</td>
+        </tr>
+      </table>
+
+      <p class="body-text">Best regards,<br />The {{ project_name }} Team</p>
+    </div>
+  </div>
+
+  <div class="footer">
+    <div class="footer-copy">
+      &copy; {{ current_year }} {{ company_name }}. All rights reserved.<br />
+      Sent to {{ user_email }}
+    </div>
+    <div class="footer-aside">You're receiving this because your organization registration was approved.</div>
+  </div>
+</div>
+""",
+    ),
     "invitation": _shell(
         "Invitation — {{ project_name }}",
         """

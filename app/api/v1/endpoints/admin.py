@@ -693,7 +693,12 @@ async def approve_organization_registration(
         invitations_sent=invitations_sent,
         message=(
             f"Approved {request.company_name}. "
-            f"{invitations_sent} invitation email(s) sent."
+            f"Organization admin credentials emailed."
+            + (
+                f" {invitations_sent} team invitation email(s) sent."
+                if invitations_sent
+                else ""
+            )
         ),
     )
 
