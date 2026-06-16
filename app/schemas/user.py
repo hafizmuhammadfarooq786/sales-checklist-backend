@@ -51,7 +51,7 @@ class AdminUserProvision(UserBase):
     team_id: Optional[int] = None
     role: UserRole = UserRole.REP
     is_active: bool = True
-    is_verified: bool = False
+    is_verified: bool = True
     must_change_password: bool = True
 
 

@@ -130,7 +130,6 @@ class AuthService:
             last_name=user_data.last_name,
             role=user_data.role,
             is_active=False,  # Activate only after email verification
-            is_verified=False,  # Require email verification
             email_verification_token=self.generate_verification_token(),
             email_verification_expires=datetime.utcnow() + timedelta(hours=24),
         )

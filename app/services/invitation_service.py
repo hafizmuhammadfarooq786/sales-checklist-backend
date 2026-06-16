@@ -142,7 +142,6 @@ class InvitationService:
             team_id=team_id,
             role=user_role,
             is_active=True,
-            is_verified=False,  # Verified when the invite is accepted
             must_change_password=True  # Force password change on first login
         )
         db.add(new_user)
@@ -420,7 +419,7 @@ class InvitationService:
     ) -> bool:
         """
         Cancel (hard-delete) a pending invitation.
-        Also hard-deletes the corresponding invited user account (if still unverified).
+        Also hard-deletes the corresponding invited user account (invite not yet accepted).
 
         Args:
             db: Database session
@@ -458,8 +457,7 @@ class InvitationService:
         await db.delete(invitation)
 
         # Hard-delete the placeholder invited user account as part of invite cancellation.
-        # Only remove users who have not completed invite acceptance.
-        if invited_user and not invited_user.is_verified:
+        if invited_user:
             await db.delete(invited_user)
 
         await db.commit()

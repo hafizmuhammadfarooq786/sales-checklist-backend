@@ -141,7 +141,6 @@ class OrganizationRegistrationService:
             organization_id=organization.id,
             role=UserRole.ADMIN,
             is_active=True,
-            is_verified=True,
             must_change_password=True,
         )
         db.add(admin_user)
