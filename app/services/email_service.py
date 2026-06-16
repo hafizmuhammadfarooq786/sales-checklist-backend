@@ -539,6 +539,65 @@ class EmailService:
             text_body=rendered["text_body"],
         )
 
+    def render_manager_note_email(
+        self,
+        *,
+        rep_email: str,
+        rep_name: str,
+        manager_name: str,
+        customer_name: str,
+        opportunity_name: str,
+        session_url: str,
+        note_type: str,
+        note_preview: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Build manager-note notification email content (no network I/O)."""
+        template = self.env.get_template("manager_note")
+        html_content = template.render(
+            **self._template_context(
+                rep_email=rep_email,
+                rep_name=rep_name,
+                manager_name=manager_name,
+                customer_name=customer_name,
+                opportunity_name=opportunity_name,
+                session_url=session_url,
+                note_type=note_type,
+                note_preview=note_preview,
+            )
+        )
+
+        deal_label = f"{customer_name} — {opportunity_name}"
+        if note_type == "audio":
+            subject = f"New audio coaching note on {deal_label}"
+            text_body = (
+                f"{manager_name} left an audio coaching note on your session for {deal_label}.\n\n"
+                f"View session: {session_url}\n"
+            )
+        else:
+            subject = f"New coaching note on {deal_label}"
+            preview_line = f"\n\nNote preview:\n{note_preview}\n" if note_preview else "\n"
+            text_body = (
+                f"{manager_name} left a coaching note on your session for {deal_label}."
+                f"{preview_line}\n"
+                f"View session: {session_url}\n"
+            )
+
+        return {
+            "to_email": rep_email,
+            "subject": subject,
+            "html_body": html_content,
+            "text_body": text_body,
+        }
+
+    async def send_manager_note_email_async(self, rendered: Dict[str, Any]) -> bool:
+        return await self._send_in_thread(
+            self._send_email,
+            to_emails=[rendered["to_email"]],
+            subject=rendered["subject"],
+            html_body=rendered["html_body"],
+            text_body=rendered.get("text_body"),
+        )
+
     def get_send_quota(self) -> Dict[str, Any]:
         """
         Get the current send quota for the AWS account

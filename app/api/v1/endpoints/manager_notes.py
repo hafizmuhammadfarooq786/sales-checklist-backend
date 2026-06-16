@@ -4,12 +4,13 @@ Manager Notes API endpoints - Coaching feedback system
 import logging
 import os
 from datetime import datetime
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from typing import Optional
 
+from app.core.config import settings
 from app.db.session import get_db
 from app.models.manager_note import ManagerNote, NoteType
 from app.models.session import Session
@@ -21,6 +22,7 @@ from app.schemas.manager_note import (
     ManagerNoteListResponse
 )
 from app.api.dependencies import get_current_user
+from app.services.email_dispatch import dispatch_manager_note_email
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -94,10 +96,88 @@ def can_add_note(user: User) -> bool:
     return user.role in [UserRole.MANAGER, UserRole.ADMIN, UserRole.SYSTEM_ADMIN]
 
 
+def _user_display_name(user: User) -> str:
+    full_name = f"{user.first_name or ''} {user.last_name or ''}".strip()
+    return full_name or user.email
+
+
+async def _notify_rep_of_manager_note(
+    *,
+    rep: User,
+    manager: User,
+    session: Session,
+    note_type: NoteType,
+    note_text: Optional[str] = None,
+) -> None:
+    """Email the session owner that a manager left coaching feedback."""
+    if not rep.email:
+        logger.warning(
+            "Skipping manager-note email for session %s: rep %s has no email",
+            session.id,
+            rep.id,
+        )
+        return
+
+    if rep.id == manager.id:
+        return
+
+    try:
+        sent = await dispatch_manager_note_email(
+            rep_email=rep.email,
+            rep_name=_user_display_name(rep),
+            manager_name=_user_display_name(manager),
+            customer_name=session.customer_name or "Customer",
+            opportunity_name=session.opportunity_name or "Opportunity",
+            session_id=session.id,
+            note_type="audio" if note_type == NoteType.AUDIO else "text",
+            note_text=note_text,
+        )
+        if not sent:
+            logger.warning(
+                "Manager-note email was not sent to %s for session %s",
+                rep.email,
+                session.id,
+            )
+    except Exception:
+        logger.exception(
+            "Failed to send manager-note email to %s for session %s",
+            rep.email,
+            session.id,
+        )
+
+
+def _schedule_rep_manager_note_notification(
+    background_tasks: BackgroundTasks,
+    *,
+    session: Session,
+    manager: User,
+    note_type: NoteType,
+    note_text: Optional[str] = None,
+) -> None:
+    """Fire-and-forget rep notification after a manager note is created."""
+    rep = session.user
+    if not rep:
+        logger.warning(
+            "Skipping manager-note email for session %s: session owner not loaded",
+            session.id,
+        )
+        return
+
+    background_tasks.add_task(
+        _notify_rep_of_manager_note,
+        rep=rep,
+        manager=manager,
+        session=session,
+        note_type=note_type,
+        note_text=note_text,
+    )
+
+
 @router.post("/{session_id}/notes", response_model=ManagerNoteResponse, status_code=status.HTTP_201_CREATED)
 async def create_manager_note(
     session_id: int,
     note_data: ManagerNoteCreate,
+    background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
@@ -152,12 +232,17 @@ async def create_manager_note(
 
     logger.info(f"Manager {current_user.id} ({current_user.email}) added note to session {session_id}")
 
-    # TODO: Send notification to session owner (rep)
-    # This will be implemented in the notification system
+    _schedule_rep_manager_note_notification(
+        background_tasks,
+        session=session,
+        manager=current_user,
+        note_type=NoteType.TEXT,
+        note_text=note_data.note_text,
+    )
 
     # Prepare response with manager name
     response = ManagerNoteResponse.model_validate(note)
-    response.manager_name = f"{current_user.first_name or ''} {current_user.last_name or ''}".strip() or current_user.email
+    response.manager_name = _user_display_name(current_user)
 
     return response
 
@@ -165,6 +250,7 @@ async def create_manager_note(
 @router.post("/{session_id}/notes/audio", response_model=ManagerNoteResponse, status_code=status.HTTP_201_CREATED)
 async def create_audio_manager_note(
     session_id: int,
+    background_tasks: BackgroundTasks,
     audio_file: UploadFile = File(...),
     duration: Optional[int] = Form(None),
     current_user: User = Depends(get_current_user),
@@ -320,9 +406,16 @@ async def create_audio_manager_note(
 
         logger.info(f"Manager {current_user.id} ({current_user.email}) added audio note to session {session_id}")
 
+        _schedule_rep_manager_note_notification(
+            background_tasks,
+            session=session,
+            manager=current_user,
+            note_type=NoteType.AUDIO,
+        )
+
         # Prepare response with manager name and audio URL
         response = ManagerNoteResponse.model_validate(note)
-        response.manager_name = f"{current_user.first_name or ''} {current_user.last_name or ''}".strip() or current_user.email
+        response.manager_name = _user_display_name(current_user)
         response.audio_url = get_audio_url(note)
 
         return response

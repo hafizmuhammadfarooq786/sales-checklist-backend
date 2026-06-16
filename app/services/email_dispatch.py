@@ -163,3 +163,49 @@ async def dispatch_organization_invitation_email(
         recipients=to_email,
         inline_send=inline_send,
     )
+
+
+async def dispatch_manager_note_email(
+    *,
+    rep_email: str,
+    rep_name: str,
+    manager_name: str,
+    customer_name: str,
+    opportunity_name: str,
+    session_id: int,
+    note_type: str,
+    note_text: Optional[str] = None,
+) -> bool:
+    """Notify the session rep that a manager left coaching feedback."""
+    import html
+
+    service = get_email_service()
+    session_url = f"{settings.FRONTEND_URL.rstrip('/')}/session/{session_id}/results"
+    note_preview = None
+    if note_type == "text" and note_text:
+        trimmed = note_text.strip()
+        if len(trimmed) > 200:
+            trimmed = f"{trimmed[:200].rstrip()}..."
+        note_preview = html.escape(trimmed)
+
+    rendered = service.render_manager_note_email(
+        rep_email=rep_email,
+        rep_name=rep_name,
+        manager_name=manager_name,
+        customer_name=customer_name,
+        opportunity_name=opportunity_name,
+        session_url=session_url,
+        note_type=note_type,
+        note_preview=note_preview,
+    )
+    from app.tasks.email import send_manager_note_email_task
+
+    async def inline_send() -> bool:
+        return await service.send_manager_note_email_async(rendered)
+
+    return await _dispatch(
+        task=send_manager_note_email_task,
+        payload=rendered,
+        recipients=rep_email,
+        inline_send=inline_send,
+    )

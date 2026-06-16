@@ -655,6 +655,72 @@ EMAIL_TEMPLATES = {
 </div>
 """,
     ),
+    "manager_note": _shell(
+        "Coaching note — {{ project_name }}",
+        """
+<div class="email-wrapper">
+  <div class="pre-header">
+    <table class="pre-header-table" role="presentation">
+      <tr>
+        <td><span class="wordmark">{{ project_name }}</span></td>
+        <td align="right"><span class="badge badge-intel">Coaching</span></td>
+      </tr>
+    </table>
+  </div>
+
+  <div class="card">
+    <div class="header">
+      <div class="header-accent"></div>
+      <div class="header-eyebrow">Manager feedback</div>
+      <h1>New coaching <span class="accent">note</span></h1>
+      <p class="header-sub">{{ manager_name }} left feedback on one of your deals.</p>
+    </div>
+    <div class="content">
+      <p class="intro-text">
+        Hello <strong>{{ rep_name }}</strong>, <strong>{{ manager_name }}</strong> added
+        {% if note_type == 'audio' %}an <strong>audio coaching note</strong>{% else %}a <strong>text coaching note</strong>{% endif %}
+        on your session for <strong>{{ customer_name }}</strong> — <strong>{{ opportunity_name }}</strong>.
+      </p>
+
+      <div class="details-grid">
+        <div class="detail-cell">
+          <div class="detail-label">Customer</div>
+          <div class="detail-value">{{ customer_name }}</div>
+        </div>
+        <div class="detail-cell">
+          <div class="detail-label">Opportunity</div>
+          <div class="detail-value">{{ opportunity_name }}</div>
+        </div>
+      </div>
+
+      {% if note_type == 'text' and note_preview %}
+      <div class="section-label">Note preview</div>
+      <div class="banner banner-warn">{{ note_preview }}</div>
+      {% elif note_type == 'audio' %}
+      <div class="banner banner-warn">
+        Open the session to listen to your manager&rsquo;s audio note.
+      </div>
+      {% endif %}
+
+      <div class="cta-section">
+        <a href="{{ session_url }}" class="cta-button">View session &rarr;</a>
+        <p class="cta-sub">Coaching notes appear on the session results page</p>
+      </div>
+
+      <p class="body-text">Best regards,<br />The {{ project_name }} Team</p>
+    </div>
+  </div>
+
+  <div class="footer">
+    <div class="footer-copy">
+      &copy; {{ current_year }} {{ company_name }}. All rights reserved.<br />
+      Sent to {{ rep_email }}
+    </div>
+    <div class="footer-aside">You received this because a manager left coaching feedback on your deal.</div>
+  </div>
+</div>
+""",
+    ),
 }
 
 
