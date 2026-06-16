@@ -272,7 +272,7 @@ async def get_dashboard_notifications(
     Returns:
     - Stalled deals (no activity for 30+ days)
     - At-risk deals (scores 0-30)
-    - High-scoring lost deals (61+ but lost/no decision)
+    - High-scoring lost deals (70+ but lost/no decision)
 
     **Permissions:**
     - MANAGER: Team notifications
