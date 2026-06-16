@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 
 from app.db.session import get_db
-from app.models import Session, User
+from app.models import Session, User, Organization
 from app.models.session import SessionStatus, SessionMode
 from app.models.scoring import ScoringResult, RiskBand
 from app.schemas.session import (
@@ -187,11 +187,20 @@ async def generate_coaching_in_background(session_id: int, total_score: float, r
                 }
 
                 org_logo_url = None
+                org_name = None
                 owner_result = await db.execute(
                     select(User).where(User.id == session.user_id)
                 )
                 session_owner = owner_result.scalar_one_or_none()
                 if session_owner and session_owner.organization_id:
+                    org_result = await db.execute(
+                        select(Organization).where(
+                            Organization.id == session_owner.organization_id
+                        )
+                    )
+                    organization = org_result.scalar_one_or_none()
+                    if organization:
+                        org_name = organization.name
                     settings_result = await db.execute(
                         select(OrganizationSettings).where(
                             OrganizationSettings.organization_id
@@ -220,6 +229,7 @@ async def generate_coaching_in_background(session_id: int, total_score: float, r
                     coaching_data=None,
                     responses_data=responses_data,
                     organization_logo_url=org_logo_url,
+                    organization_name=org_name,
                     notes_by_item_id=notes_by_item_id,
                 )
 

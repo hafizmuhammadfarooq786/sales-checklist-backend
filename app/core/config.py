@@ -13,6 +13,7 @@ class Settings(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         case_sensitive=True,
+        extra="ignore",  # allow legacy .env keys (e.g. removed SENTRY_DSN) without failing startup
     )
 
     # App
@@ -71,6 +72,8 @@ class Settings(BaseSettings):
     # When True, transcription runs in a Celery worker (requires Redis + worker process).
     # When False or broker unavailable, upload/transcribe endpoints fall back to BackgroundTasks.
     USE_CELERY_FOR_TRANSCRIPTION: bool = Field(default=False)
+    # When True, transactional email is enqueued on the Celery worker (stage/prod).
+    USE_CELERY_FOR_EMAIL: str = Field(default="auto")
 
     # CORS
     ALLOWED_ORIGINS: List[str] = Field(
@@ -96,15 +99,16 @@ class Settings(BaseSettings):
     RECOMMENDED_AUDIO_BITRATE: str = "64k"
     RECOMMENDED_AUDIO_SAMPLE_RATE: int = 22050
 
-    # Sentry
-    SENTRY_DSN: str = Field(default="")
-
     # Email (Amazon SES)
     SES_REGION: str = Field(default="us-east-2")
     SES_SENDER_EMAIL: str = Field(default="")
 
-    # Email (SMTP fallback)
-    # When SES is not configured (or SES fails), the app can send emails via SMTP.
+    # Email transport: auto (from ENVIRONMENT), smtp (local dev), or ses (stage/prod).
+    # Local/development → SMTP only. Staging/production → SES only (no SMTP fallback).
+    EMAIL_PROVIDER: str = Field(default="auto")
+    EMAIL_COMPANY_NAME: str = Field(default="The Millau Group Global")
+
+    # Email (SMTP — local development)
     SMTP_HOST: str = Field(default="")
     SMTP_PORT: int = Field(default=587)
     SMTP_USERNAME: str = Field(default="")
@@ -113,6 +117,29 @@ class Settings(BaseSettings):
     SMTP_USE_TLS: bool = Field(default=True)
     SMTP_USE_SSL: bool = Field(default=False)
     SMTP_TIMEOUT_SECONDS: int = Field(default=30)
+
+    @property
+    def email_provider(self) -> str:
+        """Resolve email transport: smtp for local dev, ses for stage/prod."""
+        explicit = (self.EMAIL_PROVIDER or "auto").strip().lower()
+        if explicit in ("smtp", "ses"):
+            return explicit
+        env = (self.ENVIRONMENT or "development").strip().lower()
+        if env in ("production", "prod", "staging", "stage"):
+            return "ses"
+        return "smtp"
+
+
+    @property
+    def use_celery_for_email(self) -> bool:
+        """Enqueue email on Celery worker for stage/prod; inline send for local dev."""
+        explicit = (self.USE_CELERY_FOR_EMAIL or "auto").strip().lower()
+        if explicit in ("true", "1", "yes"):
+            return True
+        if explicit in ("false", "0", "no"):
+            return False
+        env = (self.ENVIRONMENT or "development").strip().lower()
+        return env in ("production", "prod", "staging", "stage")
 
 
 settings = Settings()

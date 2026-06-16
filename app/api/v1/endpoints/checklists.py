@@ -10,6 +10,7 @@ from typing import List
 from app.db.session import get_db
 from app.models import ChecklistCategory, ChecklistItem
 from app.models.checklist_behaviour import ChecklistItemBehaviour
+from app.api.dependencies import get_current_user
 from app.schemas.checklist import (
     ChecklistCategoryResponse,
     ChecklistCategoryWithItems,
@@ -17,7 +18,7 @@ from app.schemas.checklist import (
     ChecklistSummary,
 )
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(get_current_user)])
 
 
 @router.get("/summary", response_model=ChecklistSummary)

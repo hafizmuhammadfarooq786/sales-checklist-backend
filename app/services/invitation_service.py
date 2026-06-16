@@ -7,20 +7,29 @@ import string
 from datetime import datetime, timedelta
 from typing import Optional, Dict
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import exists, func, select
 from sqlalchemy.orm import selectinload
 
 from app.models.invitation import Invitation
 from app.models.user import User, UserRole, Organization, Team
-from app.services.email_service import get_email_service
+from app.services.email_dispatch import dispatch_organization_invitation_email
 from app.services.auth_service import auth_service
+
+
+def exclude_users_with_pending_invitations(organization_id: int, user_email_column):
+    """Users with an active, unaccepted invitation belong on Pending Invitations only."""
+    return ~exists().where(
+        Invitation.organization_id == organization_id,
+        Invitation.accepted_at.is_(None),
+        Invitation.expires_at > datetime.utcnow(),
+        func.lower(Invitation.email) == func.lower(user_email_column),
+    )
 
 
 class InvitationService:
     """Service for managing user invitations"""
 
     def __init__(self):
-        self.email_service = get_email_service()
         self.token_expiry_days = 7  # Invitations expire after 7 days
 
     def generate_token(self) -> str:
@@ -64,7 +73,13 @@ class InvitationService:
         role: str,
         invited_by: int,
         team_id: Optional[int] = None,
-        frontend_url: str = "http://localhost:3000"
+        frontend_url: str = "http://localhost:3000",
+        first_name: Optional[str] = None,
+        last_name: Optional[str] = None,
+        job_title: Optional[str] = None,
+        direct_dial: Optional[str] = None,
+        cell_phone: Optional[str] = None,
+        auto_commit: bool = True,
     ) -> Invitation:
         """
         Create a new invitation, create user account with temporary password, and send invitation email.
@@ -118,11 +133,15 @@ class InvitationService:
         new_user = User(
             email=email,
             password_hash=auth_service.hash_password(temp_password),
+            first_name=(first_name or "").strip() or None,
+            last_name=(last_name or "").strip() or None,
+            job_title=(job_title or "").strip() or None,
+            direct_dial=(direct_dial or "").strip() or None,
+            cell_phone=(cell_phone or "").strip() or None,
             organization_id=organization_id,
             team_id=team_id,
             role=user_role,
             is_active=True,
-            is_verified=True,  # Trusted invite flow: treat invited email as verified
             must_change_password=True  # Force password change on first login
         )
         db.add(new_user)
@@ -143,48 +162,126 @@ class InvitationService:
         await db.flush()
         await db.refresh(invitation)
 
-        # Get organization and inviter details for email
+        await self._send_invitation_email_for_record(
+            db, invitation, temp_password, frontend_url
+        )
+
+        if auto_commit:
+            await db.commit()
+        return invitation
+
+    async def _send_invitation_email_for_record(
+        self,
+        db: AsyncSession,
+        invitation: Invitation,
+        temp_password: str,
+        frontend_url: str,
+        *,
+        is_resend: bool = False,
+    ) -> None:
         org_result = await db.execute(
-            select(Organization).where(Organization.id == organization_id)
+            select(Organization).where(Organization.id == invitation.organization_id)
         )
         organization = org_result.scalar_one()
 
         inviter_result = await db.execute(
-            select(User).where(User.id == invited_by)
+            select(User).where(User.id == invitation.invited_by)
         )
-        inviter = inviter_result.scalar_one()
+        inviter = inviter_result.scalar_one_or_none()
+        inviter_name = (
+            f"{inviter.first_name} {inviter.last_name}".strip()
+            if inviter and (inviter.first_name or inviter.last_name)
+            else "Your administrator"
+        )
 
-        # Get team name if team_id provided
         team_name = None
-        if team_id:
+        if invitation.team_id:
             team_result = await db.execute(
-                select(Team).where(Team.id == team_id)
+                select(Team).where(Team.id == invitation.team_id)
             )
             team = team_result.scalar_one_or_none()
             if team:
                 team_name = team.name
 
-        # Send invitation email with temporary password
-        invite_url = f"{frontend_url}/accept-invite?token={token}"
-        inviter_name = f"{inviter.first_name} {inviter.last_name}"
-
-        email_sent = await self.email_service.send_invitation_email(
-            to_email=email,
+        invite_url = f"{frontend_url}/accept-invite?token={invitation.token}"
+        email_sent = await dispatch_organization_invitation_email(
+            to_email=invitation.email,
             organization_name=organization.name,
             inviter_name=inviter_name,
             invite_url=invite_url,
-            role=role,
+            role=invitation.role,
             team_name=team_name,
-            temp_password=temp_password  # Pass temporary password to email
+            temp_password=temp_password,
+            is_resend=is_resend,
         )
-
         if not email_sent:
-            # Hard-fail so the DB transaction can rollback and the invite
-            # doesn't look successful when the email wasn't actually sent.
-            raise ValueError(f"Failed to send invitation email to {email}")
+            raise ValueError(f"Failed to send invitation email to {invitation.email}")
 
+    async def resend_invitation(
+        self,
+        db: AsyncSession,
+        invitation_id: int,
+        organization_id: int,
+        frontend_url: str,
+    ) -> Invitation:
+        """Regenerate invite token + temp password and resend the invitation email."""
+        result = await db.execute(
+            select(Invitation).where(Invitation.id == invitation_id)
+        )
+        invitation = result.scalar_one_or_none()
+        if not invitation:
+            raise ValueError("Invitation not found")
+        if invitation.organization_id != organization_id:
+            raise PermissionError("Invitation does not belong to this organization")
+        if invitation.accepted_at is not None:
+            raise ValueError("Invitation has already been accepted")
+
+        user_result = await db.execute(
+            select(User).where(
+                User.email == invitation.email,
+                User.organization_id == invitation.organization_id,
+            )
+        )
+        user = user_result.scalar_one_or_none()
+        if not user:
+            raise ValueError("Invited user account not found")
+
+        temp_password = self.generate_temp_password()
+        user.password_hash = auth_service.hash_password(temp_password)
+        user.must_change_password = True
+        user.is_active = True
+
+        invitation.token = self.generate_token()
+        invitation.expires_at = datetime.utcnow() + timedelta(days=self.token_expiry_days)
+
+        await self._send_invitation_email_for_record(
+            db, invitation, temp_password, frontend_url, is_resend=True
+        )
         await db.commit()
+        await db.refresh(invitation)
         return invitation
+
+    async def resend_pending_invitations_for_organization(
+        self,
+        db: AsyncSession,
+        organization_id: int,
+        frontend_url: str,
+    ) -> int:
+        """Resend all pending invitations for an organization. Returns count sent."""
+        invitations = await self.get_pending_invitations(db, organization_id)
+        if not invitations:
+            return 0
+
+        sent = 0
+        for invitation in invitations:
+            await self.resend_invitation(
+                db,
+                invitation.id,
+                organization_id,
+                frontend_url,
+            )
+            sent += 1
+        return sent
 
     async def verify_token(
         self,
@@ -322,7 +419,7 @@ class InvitationService:
     ) -> bool:
         """
         Cancel (hard-delete) a pending invitation.
-        Also hard-deletes the corresponding invited user account (if still unverified).
+        Also hard-deletes the corresponding invited user account (invite not yet accepted).
 
         Args:
             db: Database session
@@ -360,8 +457,7 @@ class InvitationService:
         await db.delete(invitation)
 
         # Hard-delete the placeholder invited user account as part of invite cancellation.
-        # Only remove users who have not completed invite acceptance.
-        if invited_user and not invited_user.is_verified:
+        if invited_user:
             await db.delete(invited_user)
 
         await db.commit()

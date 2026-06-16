@@ -27,6 +27,7 @@ ENV/
 *.db
 *.sqlite
 *.sqlite3
+backups/*.sql
 
 # Testing
 .pytest_cache/
@@ -50,3 +51,7 @@ Thumbs.db
 alembic/versions/*.pyc
 tests/
 audios/
+uploads/
+backups/
+docker-compose.yml
+scripts/

@@ -19,6 +19,10 @@ from app.models.scoring import ScoringResult, CoachingFeedback, RiskBand, ScoreH
 from app.models.report import Report, ReportFormat
 from app.models.invitation import Invitation
 from app.models.organization_settings import OrganizationSettings
+from app.models.organization_registration import (
+    OrganizationRegistrationRequest,
+    RegistrationStatus,
+)
 from app.models.manager_note import ManagerNote
 from app.models.checklist_item_note import ChecklistItemNote
 
@@ -49,6 +53,8 @@ __all__ = [
     "ReportFormat",
     "Invitation",
     "OrganizationSettings",
+    "OrganizationRegistrationRequest",
+    "RegistrationStatus",
     "ManagerNote",
     "ChecklistItemNote",
 ]

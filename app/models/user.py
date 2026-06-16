@@ -12,6 +12,7 @@ class UserRole(str, enum.Enum):
     """User roles for RBAC"""
     SYSTEM_ADMIN = "SYSTEM_ADMIN"  # Product admin - view only, no sessions
     ADMIN = "ADMIN"  # Organization admin
+    EXECUTIVE = "EXECUTIVE"  # Executive sponsor / leadership (view-focused)
     MANAGER = "MANAGER"  # Team manager/coach
     REP = "REP"  # Sales representative
 
@@ -22,6 +23,7 @@ class Organization(Base, TimestampMixin):
 
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(255), nullable=False)
+    industry = Column(String(100), nullable=True)
     is_active = Column(Boolean, default=True, nullable=False)
 
     # Relationships
@@ -54,6 +56,9 @@ class User(Base, TimestampMixin):
     password_hash = Column(String(255), nullable=False)
     first_name = Column(String(100), nullable=True)
     last_name = Column(String(100), nullable=True)
+    job_title = Column(String(150), nullable=True)
+    direct_dial = Column(String(50), nullable=True)
+    cell_phone = Column(String(50), nullable=True)
 
     # Role & Organization
     role = Column(SQLEnum(UserRole), default=UserRole.REP, nullable=False)
@@ -62,7 +67,7 @@ class User(Base, TimestampMixin):
 
     # Status & Security
     is_active = Column(Boolean, default=True, nullable=False)
-    is_verified = Column(Boolean, default=False, nullable=False)
+    is_verified = Column(Boolean, default=True, nullable=False)
     last_login = Column(DateTime, nullable=True)
     failed_login_attempts = Column(Integer, default=0, nullable=False)
     locked_until = Column(DateTime, nullable=True)

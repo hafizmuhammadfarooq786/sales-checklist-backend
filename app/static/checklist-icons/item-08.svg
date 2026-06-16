@@ -1,0 +1,12 @@
+<svg width="64" height="64" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg" stroke="#1a1a2e" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M32 54 V40" />
+  <path d="M32 40 V14" />
+  <path d="M27 19 l5 -5 l5 5" />
+  <path d="M32 40 C32 34 26 32 16 32" />
+  <path d="M21 27 l-5 5 l5 5" />
+  <path d="M32 40 C32 34 38 32 48 32" />
+  <path d="M43 27 l5 5 l-5 5" />
+  <text x="32" y="10" font-family="Arial, sans-serif" font-size="9" font-weight="700" fill="#1a1a2e" stroke="none" text-anchor="middle">B</text>
+  <text x="9" y="35" font-family="Arial, sans-serif" font-size="9" font-weight="700" fill="#1a1a2e" stroke="none" text-anchor="middle">A</text>
+  <text x="55" y="35" font-family="Arial, sans-serif" font-size="9" font-weight="700" fill="#1a1a2e" stroke="none" text-anchor="middle">C</text>
+</svg>

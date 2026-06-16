@@ -209,6 +209,29 @@ class S3Service:
             logger.error(f"Failed to generate presigned URL: {e}")
             return None
 
+    def get_object_bytes(self, s3_key: str) -> bytes:
+        """
+        Download an object from S3 and return its bytes.
+
+        Args:
+            s3_key: S3 object key
+
+        Returns:
+            Raw file bytes
+
+        Raises:
+            Exception: If download fails
+        """
+        try:
+            response = self.s3_client.get_object(
+                Bucket=self.bucket_name,
+                Key=s3_key,
+            )
+            return response["Body"].read()
+        except ClientError as e:
+            logger.error(f"Failed to download file from S3: {e}")
+            raise Exception(f"S3 download failed: {str(e)}")
+
     def check_file_exists(self, s3_key: str) -> bool:
         """
         Check if a file exists in S3

@@ -12,7 +12,7 @@ celery_app = Celery(
     "sales_checklist",
     broker=settings.CELERY_BROKER_URL,
     backend=settings.CELERY_RESULT_BACKEND,
-    include=["app.tasks.transcription"],
+    include=["app.tasks.transcription", "app.tasks.email"],
 )
 
 celery_app.conf.update(
@@ -26,3 +26,16 @@ celery_app.conf.update(
     task_soft_time_limit=3300,
     worker_prefetch_multiplier=1,
 )
+
+
+@celery_app.on_after_configure.connect
+def _log_worker_email_config(sender, **kwargs) -> None:
+    """Warn loudly if the worker cannot send SES email (common misconfiguration)."""
+    import logging
+
+    log = logging.getLogger(__name__)
+    if settings.email_provider == "ses" and not (settings.SES_SENDER_EMAIL or "").strip():
+        log.critical(
+            "Celery worker missing SES_SENDER_EMAIL — all email tasks will fail. "
+            "Add SES_SENDER_EMAIL and SES_REGION to the worker task definition."
+        )

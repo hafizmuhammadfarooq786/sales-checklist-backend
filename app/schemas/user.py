@@ -12,6 +12,9 @@ class UserBase(BaseModel):
     email: EmailStr
     first_name: Optional[str] = None
     last_name: Optional[str] = None
+    job_title: Optional[str] = Field(None, max_length=150)
+    direct_dial: Optional[str] = Field(None, max_length=50)
+    cell_phone: Optional[str] = Field(None, max_length=50)
 
 
 class UserCreate(UserBase):
@@ -24,6 +27,9 @@ class UserUpdate(BaseModel):
     """Schema for updating a user"""
     first_name: Optional[str] = None
     last_name: Optional[str] = None
+    job_title: Optional[str] = Field(None, max_length=150)
+    direct_dial: Optional[str] = Field(None, max_length=50)
+    cell_phone: Optional[str] = Field(None, max_length=50)
     role: Optional[UserRole] = None
     team_id: Optional[int] = None
     is_active: Optional[bool] = None
@@ -33,6 +39,9 @@ class UserSelfUpdate(BaseModel):
     """Schema for self-service profile updates (safe fields only)"""
     first_name: Optional[str] = None
     last_name: Optional[str] = None
+    job_title: Optional[str] = Field(None, max_length=150)
+    direct_dial: Optional[str] = Field(None, max_length=50)
+    cell_phone: Optional[str] = Field(None, max_length=50)
 
 
 class AdminUserProvision(UserBase):
@@ -42,7 +51,7 @@ class AdminUserProvision(UserBase):
     team_id: Optional[int] = None
     role: UserRole = UserRole.REP
     is_active: bool = True
-    is_verified: bool = False
+    is_verified: bool = True
     must_change_password: bool = True
 
 
@@ -80,6 +89,7 @@ class OrganizationResponse(BaseModel):
     """Response schema for organizations"""
     id: int
     name: str
+    industry: Optional[str] = None
     is_active: bool
     created_at: datetime
     updated_at: datetime

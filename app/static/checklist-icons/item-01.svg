@@ -1,0 +1,9 @@
+<svg width="64" height="64" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg" stroke="#1a1a2e" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <g transform="translate(6.5 3.5)">
+    <circle cx="27" cy="27" r="18" />
+    <path d="M27 9 V21 a2.6 2.6 0 0 0 0 5.2 V45" />
+    <path d="M9 27 H21 a2.6 2.6 0 0 1 5.2 0 H45" />
+    <text x="21" y="40" font-family="Arial, sans-serif" font-size="7.5" font-weight="700" fill="#1a1a2e" stroke="none" text-anchor="middle">FIT</text>
+    <path d="M14.3 39.7 L6 48" />
+  </g>
+</svg>

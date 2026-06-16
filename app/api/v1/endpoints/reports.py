@@ -15,11 +15,10 @@ from app.models.session import Session, SessionResponse
 from app.models.scoring import ScoringResult
 from app.models.report import Report
 from app.models.checklist import ChecklistItem
-from app.models.user import User
+from app.models.user import User, Organization
 from app.models.organization_settings import OrganizationSettings
 from app.api.dependencies import get_current_user, get_session_access_filter
 from app.services.report_service import build_notes_map_for_pdf, get_report_service
-from app.services.email_service import email_service
 from app.services.risk_band_service import get_risk_band
 
 router = APIRouter()
@@ -251,11 +250,18 @@ async def generate_report(
     await db.commit()
     await db.refresh(scoring)
 
-    # Organization logo (optional) for PDF header
+    # Organization branding (optional) for PDF header
     org_logo_url: Optional[str] = None
+    org_name: Optional[str] = None
     owner_result = await db.execute(select(User).where(User.id == session.user_id))
     session_owner = owner_result.scalar_one_or_none()
     if session_owner and session_owner.organization_id:
+        org_result = await db.execute(
+            select(Organization).where(Organization.id == session_owner.organization_id)
+        )
+        organization = org_result.scalar_one_or_none()
+        if organization:
+            org_name = organization.name
         settings_result = await db.execute(
             select(OrganizationSettings).where(
                 OrganizationSettings.organization_id == session_owner.organization_id
@@ -343,6 +349,7 @@ async def generate_report(
             coaching_data=None,
             responses_data=responses_data,
             organization_logo_url=org_logo_url,
+            organization_name=org_name,
             notes_by_item_id=notes_by_item_id,
         )
 
@@ -595,116 +602,6 @@ async def download_report(
         "file_size": report.pdf_file_size,
         "filename": f"sales_checklist_report_{session_id}.pdf"
     }
-
-
-@router.post("/{session_id}/report/email")
-async def email_report(
-    session_id: int,
-    recipient_email: Optional[str] = None,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """
-    Email the report to specified address or user's email.
-
-    Args:
-        session_id: Session ID
-        recipient_email: Email address to send to (optional, uses user email if not provided)
-
-    Returns:
-        Email delivery status
-
-    RBAC:
-    - REP: Can access own sessions
-    - MANAGER: Can access team sessions
-    - ADMIN: Can access org sessions
-    - SYSTEM_ADMIN: Can access all sessions
-    """
-    # Verify session access with RBAC
-    access_filter = get_session_access_filter(current_user)
-    session_result = await db.execute(
-        select(Session).where(
-            Session.id == session_id,
-            access_filter
-        )
-    )
-    session = session_result.scalar_one_or_none()
-
-    if not session:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Session not found or access denied"
-        )
-
-    # Use provided email or user's email
-    to_email = recipient_email or current_user.email
-
-    # Get report
-    report_result = await db.execute(
-        select(Report).where(Report.session_id == session_id)
-    )
-    report = report_result.scalar_one_or_none()
-
-    if not report or not report.is_generated:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Report must be generated first"
-        )
-
-    try:
-        # Send email with report link
-        user_name = f"{current_user.first_name or ''} {current_user.last_name or ''}".strip() or current_user.email
-
-        # Generate a time-limited (1 hour) presigned download link so the
-        # recipient can actually retrieve the PDF from the email.
-        download_url = get_report_url(report)
-        download_line = (
-            f"Download your report (link valid for 1 hour):\n{download_url}"
-            if download_url
-            else "You can download your report from The Sales Checklist dashboard."
-        )
-
-        message = f"""
-Your The Sales Checklist report for "{session.customer_name}" is ready!
-
-Customer: {session.customer_name}
-Opportunity: {session.opportunity_name or 'N/A'}
-Generated: {report.generated_at.strftime('%Y-%m-%d %H:%M') if report.generated_at else 'N/A'}
-
-{download_line}
-"""
-
-        email_sent = email_service.send_notification_email(
-            to_emails=[to_email],
-            subject=f"The Sales Checklist Report - {session.customer_name}",
-            message=message,
-            user_name=user_name
-        )
-
-        if email_sent:
-            # Update report record
-            report.emailed_at = datetime.utcnow()
-            report.emailed_to = to_email
-            await db.commit()
-
-            return {
-                "session_id": session_id,
-                "emailed_to": to_email,
-                "emailed_at": report.emailed_at,
-                "message": "Report emailed successfully"
-            }
-        else:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to send email. Check email service configuration."
-            )
-
-    except Exception as e:
-        logger.error(f"Error emailing report for session {session_id}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to email report: {str(e)}"
-        )
 
 
 @router.post("/{session_id}/report/regenerate")
