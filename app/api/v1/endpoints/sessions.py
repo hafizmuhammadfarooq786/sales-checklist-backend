@@ -36,12 +36,96 @@ from app.api.dependencies import (
     get_session_access_filter,
     check_session_access,
 )
+from app.services.knowledge_rag_service import ask_organization_knowledge, is_knowledge_base_enabled
+from app.services.knowledge_checklist_service import (
+    list_session_contexts,
+    get_item_context,
+    save_item_context,
+    get_checklist_item_intelligence,
+)
+from app.services.knowledge_session_intelligence_service import (
+    analyze_session_intelligence,
+    get_embedded_coaching_for_item,
+    get_session_insight,
+    run_session_intelligence_job,
+)
 from app.services.risk_band_service import get_risk_band
+from app.schemas.knowledge_base import (
+    KnowledgeAskRequest,
+    KnowledgeAskResponse,
+    ChecklistItemContextUpdate,
+    ChecklistItemContextResponse,
+    SessionChecklistContextsResponse,
+    ChecklistItemIntelligenceRequest,
+    ChecklistItemIntelligenceResponse,
+    SessionKnowledgeInsightResponse,
+    EmbeddedCoachingRequest,
+    EmbeddedCoachingResponse,
+    NextBestAnswer,
+    EmbeddedCoachingItem,
+    TechnicalRiskItem,
+)
 from app.models.checklist import ChecklistItem
 from app.models.session import SessionResponse as SessionResponseModel
+from app.core.config import settings
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+
+def _enqueue_session_intelligence(
+    background_tasks: BackgroundTasks,
+    session_id: int,
+    organization_id: int,
+) -> None:
+    if settings.USE_CELERY_FOR_KNOWLEDGE_BASE:
+        try:
+            from app.tasks.knowledge_base import analyze_session_intelligence_task
+
+            analyze_session_intelligence_task.delay(session_id, organization_id)
+            return
+        except Exception as exc:
+            logger.warning(
+                "Celery unavailable for session intelligence; using BackgroundTasks: %s",
+                exc,
+            )
+    background_tasks.add_task(run_session_intelligence_job, session_id, organization_id)
+
+
+def _insight_payload_from_row(row) -> dict:
+    return {
+        "knowledge_base_enabled": row.knowledge_base_enabled,
+        "next_best_answers": row.next_best_answers or [],
+        "embedded_coaching": row.embedded_coaching or [],
+        "technical_risks": row.technical_risks or [],
+        "summary_text": row.summary_text,
+        "has_technical_risk": row.has_technical_risk,
+        "analyzed_at": row.analyzed_at,
+    }
+
+
+def _insight_response_from_payload(payload: dict) -> SessionKnowledgeInsightResponse:
+    return SessionKnowledgeInsightResponse(
+        knowledge_base_enabled=payload.get("knowledge_base_enabled", False),
+        next_best_answers=[
+            NextBestAnswer(**item)
+            for item in payload.get("next_best_answers") or []
+            if isinstance(item, dict)
+        ],
+        embedded_coaching=[
+            EmbeddedCoachingItem(**item)
+            for item in payload.get("embedded_coaching") or []
+            if isinstance(item, dict)
+        ],
+        technical_risks=[
+            TechnicalRiskItem(**item)
+            for item in payload.get("technical_risks") or []
+            if isinstance(item, dict)
+        ],
+        summary_text=payload.get("summary_text"),
+        has_technical_risk=bool(payload.get("has_technical_risk")),
+        analyzed_at=payload.get("analyzed_at"),
+    )
 
 
 async def generate_coaching_in_background(session_id: int, total_score: float, risk_band: RiskBand):
@@ -507,6 +591,143 @@ async def get_session(
     return SessionResponse.model_validate(session)
 
 
+@router.post("/{session_id}/knowledge-base/ask", response_model=KnowledgeAskResponse)
+async def ask_session_knowledge_base(
+    session_id: int,
+    payload: KnowledgeAskRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Ask organization AI using approved knowledge base content for this deal."""
+    has_access = await check_session_access(session_id, current_user, db)
+    if not has_access:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+
+    if not current_user.organization_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User is not assigned to an organization",
+        )
+
+    result = await db.execute(select(Session).where(Session.id == session_id))
+    session = result.scalar_one_or_none()
+    if not session:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+
+    response = await ask_organization_knowledge(
+        db,
+        organization_id=current_user.organization_id,
+        question=payload.question.strip(),
+        opportunity_name=session.opportunity_name,
+    )
+    return KnowledgeAskResponse(**response)
+
+
+@router.get(
+    "/{session_id}/knowledge-base/insights",
+    response_model=SessionKnowledgeInsightResponse,
+)
+async def get_session_knowledge_insights(
+    session_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    has_access = await check_session_access(session_id, current_user, db)
+    if not has_access:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+
+    if not current_user.organization_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+
+    row = await get_session_insight(db, session_id)
+    if row:
+        return _insight_response_from_payload(_insight_payload_from_row(row))
+
+    enabled = await is_knowledge_base_enabled(db, current_user.organization_id)
+    return SessionKnowledgeInsightResponse(
+        knowledge_base_enabled=enabled,
+    )
+
+
+@router.post(
+    "/{session_id}/knowledge-base/analyze",
+    response_model=SessionKnowledgeInsightResponse,
+)
+async def analyze_session_knowledge_insights(
+    session_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    has_access = await check_session_access(session_id, current_user, db)
+    if not has_access:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+
+    if not current_user.organization_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+
+    result = await db.execute(select(Session).where(Session.id == session_id))
+    session = result.scalar_one_or_none()
+    if not session:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+
+    try:
+        payload = await analyze_session_intelligence(
+            db,
+            organization_id=current_user.organization_id,
+            session=session,
+        )
+        await db.commit()
+        return _insight_response_from_payload(payload)
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+        ) from exc
+    except Exception as exc:
+        logger.exception("Deal intelligence analysis failed for session %s", session_id)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Could not analyze this deal. Check that OpenAI is configured and try again.",
+        ) from exc
+
+
+@router.post(
+    "/{session_id}/knowledge-base/coaching",
+    response_model=EmbeddedCoachingResponse,
+)
+async def get_session_embedded_coaching(
+    session_id: int,
+    payload: EmbeddedCoachingRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    has_access = await check_session_access(session_id, current_user, db)
+    if not has_access:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+
+    if not current_user.organization_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+
+    result = await db.execute(select(Session).where(Session.id == session_id))
+    session = result.scalar_one_or_none()
+    if not session:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+
+    try:
+        coaching = await get_embedded_coaching_for_item(
+            db,
+            organization_id=current_user.organization_id,
+            session=session,
+            checklist_item_id=payload.checklist_item_id,
+            trigger=payload.trigger,
+            deal_context=payload.deal_context,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+    return EmbeddedCoachingResponse(**coaching)
+
+
 @router.patch("/{session_id}", response_model=SessionResponse)
 async def update_session(
     session_id: int,
@@ -699,6 +920,128 @@ async def get_checklist_for_review(
         items_no=items_no,
         status=session.status.value
     )
+
+
+@router.get(
+    "/{session_id}/checklist/contexts",
+    response_model=SessionChecklistContextsResponse,
+)
+async def list_checklist_item_contexts(
+    session_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """List saved deal context for all checklist items in a session."""
+    has_access = await check_session_access(session_id, current_user, db)
+    if not has_access:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+
+    rows = await list_session_contexts(db, session_id)
+    return SessionChecklistContextsResponse(
+        session_id=session_id,
+        contexts=[
+            ChecklistItemContextResponse(
+                session_id=row.session_id,
+                checklist_item_id=row.checklist_item_id,
+                deal_context=row.deal_context,
+            )
+            for row in rows
+        ],
+    )
+
+
+@router.get(
+    "/{session_id}/checklist/items/{item_id}/context",
+    response_model=ChecklistItemContextResponse,
+)
+async def get_checklist_item_context(
+    session_id: int,
+    item_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    has_access = await check_session_access(session_id, current_user, db)
+    if not has_access:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+
+    row = await get_item_context(db, session_id, item_id)
+    return ChecklistItemContextResponse(
+        session_id=session_id,
+        checklist_item_id=item_id,
+        deal_context=row.deal_context if row else None,
+    )
+
+
+@router.put(
+    "/{session_id}/checklist/items/{item_id}/context",
+    response_model=ChecklistItemContextResponse,
+)
+async def update_checklist_item_context(
+    session_id: int,
+    item_id: int,
+    payload: ChecklistItemContextUpdate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    has_access = await check_session_access(session_id, current_user, db)
+    if not has_access:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+
+    item = await db.get(ChecklistItem, item_id)
+    if not item or not item.is_active:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Checklist item not found")
+
+    row = await save_item_context(db, session_id, item_id, payload.deal_context)
+    return ChecklistItemContextResponse(
+        session_id=row.session_id,
+        checklist_item_id=row.checklist_item_id,
+        deal_context=row.deal_context,
+    )
+
+
+@router.post(
+    "/{session_id}/checklist/items/{item_id}/intelligence",
+    response_model=ChecklistItemIntelligenceResponse,
+)
+async def get_checklist_item_intelligence_endpoint(
+    session_id: int,
+    item_id: int,
+    payload: ChecklistItemIntelligenceRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Surface org knowledge, expertise, and Yes/No guidance for a checklist item."""
+    has_access = await check_session_access(session_id, current_user, db)
+    if not has_access:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+
+    if not current_user.organization_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User is not assigned to an organization",
+        )
+
+    result = await db.execute(select(Session).where(Session.id == session_id))
+    session = result.scalar_one_or_none()
+    if not session:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+
+    item = await db.get(ChecklistItem, item_id)
+    if not item or not item.is_active:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Checklist item not found")
+
+    try:
+        intelligence = await get_checklist_item_intelligence(
+            db,
+            organization_id=current_user.organization_id,
+            session=session,
+            checklist_item_id=item_id,
+            deal_context=payload.deal_context,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+    return ChecklistItemIntelligenceResponse(**intelligence)
 
 
 @router.put(
@@ -934,6 +1277,12 @@ async def submit_manual_checklist(
         total_score,
         risk_band
     )
+    if current_user.organization_id:
+        _enqueue_session_intelligence(
+            background_tasks,
+            session_id,
+            current_user.organization_id,
+        )
 
     return session
 
@@ -1130,6 +1479,13 @@ async def submit_checklist(
 
         logger.info(f"Coaching feedback generated for session {session_id}")
 
+        if current_user.organization_id:
+            _enqueue_session_intelligence(
+                background_tasks,
+                session_id,
+                current_user.organization_id,
+            )
+
         # Queue PDF report generation in background
         # background_tasks.add_task(
         #     generate_report_in_background,
@@ -1155,6 +1511,13 @@ async def submit_checklist(
 
     except Exception as coaching_error:
         logger.error(f"Coaching generation failed: {str(coaching_error)}", exc_info=True)
+
+        if current_user.organization_id:
+            _enqueue_session_intelligence(
+                background_tasks,
+                session_id,
+                current_user.organization_id,
+            )
 
         # Return success for submission even if coaching fails
         return ChecklistSubmitResponse(
