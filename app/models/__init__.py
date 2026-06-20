@@ -25,6 +25,14 @@ from app.models.organization_registration import (
 )
 from app.models.manager_note import ManagerNote
 from app.models.checklist_item_note import ChecklistItemNote
+from app.models.session_checklist_context import SessionChecklistItemContext
+from app.models.session_knowledge_insight import SessionKnowledgeInsight
+from app.models.organization_knowledge import (
+    KnowledgeBaseStatus,
+    KnowledgeDocumentStatus,
+    OrganizationKnowledgeDocument,
+    OrganizationKnowledgeChunk,
+)
 
 # Export all for easy imports
 __all__ = [
@@ -57,4 +65,10 @@ __all__ = [
     "RegistrationStatus",
     "ManagerNote",
     "ChecklistItemNote",
+    "SessionChecklistItemContext",
+    "SessionKnowledgeInsight",
+    "KnowledgeBaseStatus",
+    "KnowledgeDocumentStatus",
+    "OrganizationKnowledgeDocument",
+    "OrganizationKnowledgeChunk",
 ]

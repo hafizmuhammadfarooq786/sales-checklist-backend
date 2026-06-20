@@ -15,6 +15,7 @@ from app.models.session import Session, SessionResponse, SessionStatus, DealStag
 from app.models.scoring import ScoringResult
 from app.models.user import User, UserRole
 from app.models.checklist import ChecklistItem, ChecklistCategory
+from app.models.session_knowledge_insight import SessionKnowledgeInsight
 from app.api.dependencies import get_current_user
 from app.core.dashboard_date import get_dashboard_date_range
 from app.services.risk_band_service import (
@@ -104,6 +105,7 @@ class DashboardNotifications(BaseModel):
     stalled_deals: List[DealAlert]
     at_risk_deals: List[DealAlert]
     high_score_lost_deals: List[DealAlert]
+    knowledge_risk_deals: List[DealAlert]
     total_alerts: int
 
     class Config:
@@ -180,6 +182,50 @@ async def get_team_members(user: User, db: AsyncSession) -> List[int]:
     else:
         # Reps only see themselves
         return [user.id]
+
+
+async def fetch_knowledge_risk_deals(
+    db: AsyncSession,
+    team_member_ids: List[int],
+    *,
+    session_filter=None,
+) -> List[DealAlert]:
+    """Sessions flagged with organization knowledge technical risks."""
+    if not team_member_ids:
+        return []
+
+    conditions = [
+        Session.user_id.in_(team_member_ids),
+        SessionKnowledgeInsight.has_technical_risk.is_(True),
+    ]
+    if session_filter is not None:
+        conditions.append(session_filter)
+
+    result = await db.execute(
+        select(Session, User, ScoringResult)
+        .join(User, Session.user_id == User.id)
+        .join(SessionKnowledgeInsight, SessionKnowledgeInsight.session_id == Session.id)
+        .outerjoin(ScoringResult, ScoringResult.session_id == Session.id)
+        .where(and_(*conditions))
+        .order_by(desc(SessionKnowledgeInsight.analyzed_at))
+        .limit(50)
+    )
+
+    alerts: list[DealAlert] = []
+    for session, user, scoring in result.all():
+        alerts.append(
+            DealAlert(
+                session_id=session.id,
+                customer_name=session.customer_name,
+                salesperson_name=f"{user.first_name or ''} {user.last_name or ''}".strip() or user.email,
+                salesperson_id=user.id,
+                alert_type="knowledge_risk",
+                score=scoring.total_score if scoring else None,
+                deal_stage=session.deal_stage,
+                last_updated=session.updated_at,
+            )
+        )
+    return alerts
 
 
 # Endpoints
@@ -391,12 +437,19 @@ async def get_dashboard_notifications(
             last_updated=session.updated_at
         ))
 
-    total_alerts = len(stalled_deals) + len(at_risk_deals) + len(high_score_lost_deals)
+    knowledge_risk_deals = await fetch_knowledge_risk_deals(db, team_member_ids)
+    total_alerts = (
+        len(stalled_deals)
+        + len(at_risk_deals)
+        + len(high_score_lost_deals)
+        + len(knowledge_risk_deals)
+    )
 
     return DashboardNotifications(
         stalled_deals=stalled_deals,
         at_risk_deals=at_risk_deals,
         high_score_lost_deals=high_score_lost_deals,
+        knowledge_risk_deals=knowledge_risk_deals,
         total_alerts=total_alerts
     )
 
@@ -898,11 +951,22 @@ async def get_dashboard_overview(
             last_updated=session.updated_at
         ))
 
+    knowledge_risk_deals = await fetch_knowledge_risk_deals(
+        db,
+        team_member_ids,
+        session_filter=as_of_session_filter,
+    )
     notifications = DashboardNotifications(
         stalled_deals=stalled_deals,
         at_risk_deals=at_risk_deals,
         high_score_lost_deals=high_score_lost_deals,
-        total_alerts=len(stalled_deals) + len(at_risk_deals) + len(high_score_lost_deals)
+        knowledge_risk_deals=knowledge_risk_deals,
+        total_alerts=(
+            len(stalled_deals)
+            + len(at_risk_deals)
+            + len(high_score_lost_deals)
+            + len(knowledge_risk_deals)
+        ),
     )
 
     # 3. Get Active Checklists (with sorting)

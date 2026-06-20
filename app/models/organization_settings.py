@@ -2,11 +2,12 @@
 Organization Settings Model
 Stores configuration and preferences for each organization
 """
-from sqlalchemy import Column, Integer, String, Boolean, ForeignKey, Text
+from sqlalchemy import Column, Integer, String, Boolean, ForeignKey, Text, DateTime, Enum as SQLEnum
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
 
 from app.models.base import Base, TimestampMixin
+from app.models.organization_knowledge import KnowledgeBaseStatus
 
 
 class OrganizationSettings(Base, TimestampMixin):
@@ -33,6 +34,19 @@ class OrganizationSettings(Base, TimestampMixin):
     executive_sponsor_email = Column(String(255), nullable=True)
     executive_sponsor_direct_dial = Column(String(50), nullable=True)
     executive_sponsor_cell_phone = Column(String(50), nullable=True)
+
+    # Organization Knowledge Intelligence
+    knowledge_base_status = Column(
+        SQLEnum(
+            KnowledgeBaseStatus,
+            name="knowledgebasestatus",
+            values_callable=lambda enum_cls: [member.value for member in enum_cls],
+        ),
+        nullable=False,
+        default=KnowledgeBaseStatus.NOT_STARTED,
+    )
+    knowledge_base_ready_at = Column(DateTime(timezone=True), nullable=True)
+    knowledge_base_error_message = Column(Text, nullable=True)
 
     # Flexible settings storage (JSONB)
     settings = Column(JSONB, nullable=True, default={})

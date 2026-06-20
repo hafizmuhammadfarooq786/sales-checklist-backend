@@ -12,7 +12,7 @@ celery_app = Celery(
     "sales_checklist",
     broker=settings.CELERY_BROKER_URL,
     backend=settings.CELERY_RESULT_BACKEND,
-    include=["app.tasks.transcription", "app.tasks.email"],
+    include=["app.tasks.transcription", "app.tasks.email", "app.tasks.knowledge_base"],
 )
 
 celery_app.conf.update(
