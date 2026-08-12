@@ -7,12 +7,14 @@ import base64
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Header
 from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, or_
+from sqlalchemy import select, func, or_, delete
 from sqlalchemy.orm import selectinload
 from typing import List, Optional
+from sqlalchemy.exc import IntegrityError
 
 from app.db.session import get_db
 from app.models import Organization, User, Team, OrganizationSettings
+from app.models.invitation import Invitation
 from app.models.organization_registration import (
     OrganizationRegistrationRequest,
     RegistrationStatus,
@@ -23,6 +25,11 @@ from app.schemas.organization import (
     OrganizationUpdate,
     OrganizationResponse,
 )
+from app.schemas.admin_insights import (
+    OrganizationInsightsResponse,
+    OrganizationWithUsageResponse,
+    PlatformInsightsOverview,
+)
 from app.schemas.organization_registration import (
     OrganizationRegistrationApproveResponse,
     OrganizationRegistrationReject,
@@ -32,6 +39,7 @@ from app.schemas.organization_registration import (
 )
 from app.schemas.user import UserResponse, UserUpdate, AdminUserProvision
 from app.api.dependencies import require_roles
+from app.services.admin_insights_service import get_admin_insights_service
 from app.services.auth_service import auth_service
 from app.services.invitation_service import get_invitation_service
 from app.services.org_logo_service import guess_logo_content_type, load_organization_logo_bytes
@@ -56,9 +64,21 @@ def _require_internal_admin_api_key(x_internal_api_key: str = Header(..., alias=
         )
 
 
+# ==================== INSIGHTS (P0) ====================
+
+@router.get("/insights/overview", response_model=PlatformInsightsOverview)
+async def get_platform_insights_overview(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.SYSTEM_ADMIN)),
+):
+    """Platform-wide adoption overview across all organizations (SYSTEM_ADMIN only)."""
+    service = get_admin_insights_service(db)
+    return await service.get_platform_overview()
+
+
 # ==================== ORGANIZATIONS ====================
 
-@router.get("/organizations", response_model=List[OrganizationResponse])
+@router.get("/organizations", response_model=List[OrganizationWithUsageResponse])
 async def list_organizations(
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=500),
@@ -68,27 +88,19 @@ async def list_organizations(
     current_user: User = Depends(require_roles(UserRole.SYSTEM_ADMIN))
 ):
     """
-    List all organizations (SYSTEM_ADMIN only).
+    List all organizations with usage summary (SYSTEM_ADMIN only).
 
     Supports pagination and filtering by:
     - search: Search by organization name
     - is_active: Filter by active status
     """
-    query = select(Organization)
-
-    # Apply filters
-    if search:
-        query = query.where(Organization.name.ilike(f"%{search}%"))
-    if is_active is not None:
-        query = query.where(Organization.is_active == is_active)
-
-    # Apply pagination and ordering
-    query = query.order_by(Organization.created_at.desc()).offset(skip).limit(limit)
-
-    result = await db.execute(query)
-    organizations = result.scalars().all()
-
-    return [OrganizationResponse.model_validate(org) for org in organizations]
+    service = get_admin_insights_service(db)
+    return await service.list_organizations_with_usage(
+        skip=skip,
+        limit=limit,
+        search=search,
+        is_active=is_active,
+    )
 
 
 @router.post("/organizations", response_model=OrganizationResponse, status_code=status.HTTP_201_CREATED)
@@ -156,6 +168,31 @@ async def get_organization(
     return OrganizationResponse.model_validate(organization)
 
 
+@router.get(
+    "/organizations/{org_id}/insights",
+    response_model=OrganizationInsightsResponse,
+)
+async def get_organization_insights(
+    org_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.SYSTEM_ADMIN)),
+):
+    """
+    Company adoption insights after registration approval (SYSTEM_ADMIN only).
+
+    Answers: have they logged in, invites accepted, teams, deal sessions.
+    Live auth-session counts are placeholders until P1.
+    """
+    service = get_admin_insights_service(db)
+    try:
+        return await service.get_organization_insights(org_id)
+    except LookupError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+
+
 @router.patch("/organizations/{org_id}", response_model=OrganizationResponse)
 async def update_organization(
     org_id: int,
@@ -197,7 +234,8 @@ async def delete_organization(
     """
     Delete an organization (SYSTEM_ADMIN only).
 
-    WARNING: This will cascade delete all teams, users, and data associated with this organization.
+    WARNING: This will cascade delete teams/settings/invitations and related org data.
+    Non-deleted users must be removed first.
     """
     result = await db.execute(
         select(Organization).where(Organization.id == org_id)
@@ -210,9 +248,12 @@ async def delete_organization(
             detail=f"Organization with ID {org_id} not found"
         )
 
-    # Check if organization has users
+    # Block while any non-deleted users still belong to the org
     user_count_result = await db.execute(
-        select(func.count(User.id)).where(User.organization_id == org_id)
+        select(func.count(User.id)).where(
+            User.organization_id == org_id,
+            User.deleted_at.is_(None),
+        )
     )
     user_count = user_count_result.scalar() or 0
 
@@ -222,8 +263,26 @@ async def delete_organization(
             detail=f"Cannot delete organization with {user_count} active users. Remove users first."
         )
 
-    await db.delete(organization)
-    await db.commit()
+    try:
+        # Use SQL DELETE so PostgreSQL ON DELETE CASCADE runs.
+        # session.delete(org) loads invitation relationships and tries to SET NULL
+        # on invitations.organization_id (NOT NULL) → IntegrityError / 500.
+        await db.execute(
+            delete(Invitation).where(Invitation.organization_id == org_id)
+        )
+        await db.execute(
+            delete(Organization).where(Organization.id == org_id)
+        )
+        await db.commit()
+    except IntegrityError as exc:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "Cannot delete organization because related records still reference it. "
+                "Remove users and dependent data first."
+            ),
+        ) from exc
 
 
 # ==================== USERS ====================
