@@ -10,6 +10,7 @@ from typing import Optional
 from app.db.session import get_db
 from app.models.user import User, UserRole
 from app.services.auth_service import auth_service
+from app.services.auth_session_service import auth_session_service
 
 
 security = HTTPBearer(auto_error=False)
@@ -24,6 +25,7 @@ async def get_current_user_id(
     Validates JWT token and extracts user_id.
 
     SECURITY: Always requires valid JWT token - no bypasses in any environment.
+    Also enforces auth_session revocation when JWT includes jti (P1).
     """
 
     # Validate JWT token is provided
@@ -50,6 +52,9 @@ async def get_current_user_id(
             detail="Invalid token payload",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+    # Soft mode: missing jti (legacy tokens) allowed; present jti must be active
+    await auth_session_service.assert_session_active(db, payload.get("jti"))
 
     try:
         return int(user_id)
