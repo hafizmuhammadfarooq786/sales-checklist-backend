@@ -1,4 +1,5 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -12,14 +13,22 @@ from app.schemas.user import (
     PasswordChange
 )
 from app.services.auth_service import auth_service
+from app.services.auth_session_service import auth_session_service
+from app.services.activity_emitter import activity_emitter
+from app.services import activity_event_types as evt
 from app.services.email_dispatch import (
     dispatch_password_reset_email,
     dispatch_verification_email,
     dispatch_welcome_email,
 )
-from app.api.dependencies import get_current_active_user
+from app.api.dependencies import get_current_active_user, security
 from app.core.config import settings
+from app.core.request_context import client_ip_from_request
 from app.models.user import UserRole
+
+
+def _client_ip(request: Request) -> str | None:
+    return client_ip_from_request(request)
 
 logger = logging.getLogger(__name__)
 
@@ -86,12 +95,14 @@ async def register(
 @router.post("/login", response_model=Token)
 async def login(
     user_credentials: UserLogin,
+    request: Request,
     db: AsyncSession = Depends(get_db)
 ) -> Token:
     """
     Authenticate user and return JWT token.
     Validates email/password combination and returns access token.
     Implements account locking after failed attempts.
+    Registers an auth_session (jti) for Super Admin live visibility (P1).
     """
     
     user = await auth_service.authenticate_user(
@@ -99,16 +110,82 @@ async def login(
     )
     
     if not user:
+        await activity_emitter.emit(
+            db,
+            event_type=evt.AUTH_LOGIN_FAILED,
+            payload={"email": user_credentials.email},
+            commit=True,
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    
+
+    jti = auth_session_service.new_jti()
+    remember_me = bool(user_credentials.remember_me)
+    expires_at = auth_service.token_expiry_datetime(remember_me=remember_me)
+
     token_response = await auth_service.create_token_response(
-        user, remember_me=user_credentials.remember_me
+        user, remember_me=remember_me, jti=jti
+    )
+    await auth_session_service.create_session(
+        db,
+        user=user,
+        jti=jti,
+        expires_at=expires_at,
+        remember_me=remember_me,
+        ip_address=_client_ip(request),
+        user_agent=request.headers.get("user-agent"),
+    )
+    await activity_emitter.emit(
+        db,
+        event_type=evt.AUTH_LOGIN,
+        organization_id=user.organization_id,
+        actor_user_id=user.id,
+        resource_type="auth_session",
+        resource_id=jti,
+        payload={"remember_me": remember_me, "role": user.role.value},
+        commit=True,
     )
     return token_response
+
+
+@router.post("/logout", status_code=status.HTTP_200_OK)
+async def logout(
+    credentials: HTTPAuthorizationCredentials | None = Depends(security),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """
+    Revoke the current auth session (jti). Safe to call even if already revoked.
+    """
+    if not credentials:
+        return {"message": "Logged out"}
+
+    payload = auth_service.decode_access_token(credentials.credentials)
+    jti = payload.get("jti") if payload else None
+    user_id = None
+    org_id = None
+    if payload and payload.get("sub"):
+        try:
+            user_id = int(payload["sub"])
+        except (TypeError, ValueError):
+            user_id = None
+    if jti:
+        session = await auth_session_service.revoke_session(db, jti)
+        if session:
+            org_id = session.organization_id
+            user_id = user_id or session.user_id
+    await activity_emitter.emit(
+        db,
+        event_type=evt.AUTH_LOGOUT,
+        organization_id=org_id,
+        actor_user_id=user_id,
+        resource_type="auth_session",
+        resource_id=jti,
+        commit=True,
+    )
+    return {"message": "Logged out"}
 
 
 # Verify user email address with token
@@ -224,6 +301,20 @@ async def reset_password(
     Reset password with token.
     """
     
+    # Resolve user before reset so we can revoke sessions after success
+    from sqlalchemy import and_
+    from datetime import datetime
+
+    result = await db.execute(
+        select(User).where(
+            and_(
+                User.password_reset_token == reset_data.token,
+                User.password_reset_expires > datetime.utcnow(),
+            )
+        )
+    )
+    reset_user = result.scalar_one_or_none()
+
     success = await auth_service.reset_password(
         db, reset_data.token, reset_data.new_password
     )
@@ -233,6 +324,9 @@ async def reset_password(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid or expired reset token"
         )
+
+    if reset_user:
+        await auth_session_service.revoke_all_for_user(db, reset_user.id)
     
     return {"message": "Password reset successfully"}
 
@@ -247,6 +341,7 @@ async def change_password(
     Change password for authenticated user.
     Requires current password verification for security.
     Prevents same password from being used again.
+    Revokes all auth sessions so the user must sign in again.
     """
 
     if auth_service.verify_password(password_data.new_password, current_user.password_hash):
@@ -265,6 +360,16 @@ async def change_password(
             detail="Current password is incorrect"
         )
 
+    await auth_session_service.revoke_all_for_user(db, current_user.id)
+    await activity_emitter.emit(
+        db,
+        event_type=evt.AUTH_PASSWORD_CHANGED,
+        organization_id=current_user.organization_id,
+        actor_user_id=current_user.id,
+        resource_type="user",
+        resource_id=current_user.id,
+        commit=True,
+    )
     logger.info(f"Password changed successfully for user {current_user.email}")
 
     return {"message": "Password changed successfully"}

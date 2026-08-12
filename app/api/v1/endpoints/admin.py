@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, or_, delete
 from sqlalchemy.orm import selectinload
 from typing import List, Optional
+from datetime import datetime
 from sqlalchemy.exc import IntegrityError
 
 from app.db.session import get_db
@@ -30,6 +31,13 @@ from app.schemas.admin_insights import (
     OrganizationWithUsageResponse,
     PlatformInsightsOverview,
 )
+from app.schemas.auth_session import AuthSessionResponse
+from app.schemas.activity_event import (
+    ActivityEventResponse,
+    ActivityEventListResponse,
+    ActivityEventDetailResponse,
+    ActivityTraceResponse,
+)
 from app.schemas.organization_registration import (
     OrganizationRegistrationApproveResponse,
     OrganizationRegistrationReject,
@@ -41,6 +49,9 @@ from app.schemas.user import UserResponse, UserUpdate, AdminUserProvision
 from app.api.dependencies import require_roles
 from app.services.admin_insights_service import get_admin_insights_service
 from app.services.auth_service import auth_service
+from app.services.auth_session_service import auth_session_service
+from app.services.activity_emitter import activity_emitter
+from app.services import activity_event_types as evt
 from app.services.invitation_service import get_invitation_service
 from app.services.org_logo_service import guess_logo_content_type, load_organization_logo_bytes
 from app.services.registration_service import get_registration_service
@@ -180,8 +191,8 @@ async def get_organization_insights(
     """
     Company adoption insights after registration approval (SYSTEM_ADMIN only).
 
-    Answers: have they logged in, invites accepted, teams, deal sessions.
-    Live auth-session counts are placeholders until P1.
+    Answers: have they logged in, invites accepted, teams, deal sessions,
+    and live auth-session counts from the auth_sessions registry (P1).
     """
     service = get_admin_insights_service(db)
     try:
@@ -191,6 +202,268 @@ async def get_organization_insights(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=str(exc),
         ) from exc
+
+
+def _auth_session_to_response(session) -> AuthSessionResponse:
+    user = getattr(session, "user", None)
+    name = None
+    if user:
+        name = f"{user.first_name or ''} {user.last_name or ''}".strip() or None
+    return AuthSessionResponse(
+        id=session.id,
+        user_id=session.user_id,
+        organization_id=session.organization_id,
+        user_email=user.email if user else None,
+        user_name=name,
+        created_at=session.created_at,
+        expires_at=session.expires_at,
+        last_seen_at=session.last_seen_at,
+        revoked_at=session.revoked_at,
+        ip_address=session.ip_address,
+        user_agent=session.user_agent,
+        remember_me=bool(session.remember_me),
+        is_active=session.is_active,
+    )
+
+
+@router.get(
+    "/organizations/{org_id}/auth-sessions",
+    response_model=List[AuthSessionResponse],
+)
+async def list_organization_auth_sessions(
+    org_id: int,
+    status_filter: str = Query("active", alias="status", regex="^(active|all)$"),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=500),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.SYSTEM_ADMIN)),
+):
+    """List login sessions for an organization (SYSTEM_ADMIN only)."""
+    org = await db.execute(select(Organization).where(Organization.id == org_id))
+    if not org.scalar_one_or_none():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Organization with ID {org_id} not found",
+        )
+
+    sessions = await auth_session_service.list_sessions(
+        db,
+        organization_id=org_id,
+        active_only=(status_filter == "active"),
+        skip=skip,
+        limit=limit,
+    )
+    return [_auth_session_to_response(s) for s in sessions]
+
+
+@router.get(
+    "/users/{user_id}/auth-sessions",
+    response_model=List[AuthSessionResponse],
+)
+async def list_user_auth_sessions(
+    user_id: int,
+    status_filter: str = Query("active", alias="status", regex="^(active|all)$"),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=500),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.SYSTEM_ADMIN)),
+):
+    """List login sessions for a user (SYSTEM_ADMIN only)."""
+    result = await db.execute(
+        select(User).where(User.id == user_id, User.deleted_at.is_(None))
+    )
+    if not result.scalar_one_or_none():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"User with ID {user_id} not found",
+        )
+
+    sessions = await auth_session_service.list_sessions(
+        db,
+        user_id=user_id,
+        active_only=(status_filter == "active"),
+        skip=skip,
+        limit=limit,
+    )
+    return [_auth_session_to_response(s) for s in sessions]
+
+
+@router.post(
+    "/auth-sessions/{session_id}/revoke",
+    response_model=AuthSessionResponse,
+)
+async def revoke_auth_session(
+    session_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.SYSTEM_ADMIN)),
+):
+    """Force-revoke a login session (SYSTEM_ADMIN only)."""
+    session = await auth_session_service.revoke_session(
+        db, session_id, actor_user_id=current_user.id
+    )
+    if not session:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Auth session not found",
+        )
+    # Re-fetch with user relationship for response enrichment
+    session = await auth_session_service.get_session(db, session_id) or session
+    await activity_emitter.emit(
+        db,
+        event_type=evt.ADMIN_AUTH_SESSION_REVOKED,
+        organization_id=session.organization_id,
+        actor_user_id=current_user.id,
+        resource_type="auth_session",
+        resource_id=session_id,
+        payload={"target_user_id": session.user_id},
+        commit=True,
+    )
+    return _auth_session_to_response(session)
+
+
+def _activity_event_to_response(event) -> ActivityEventResponse:
+    actor = getattr(event, "actor", None)
+    org = getattr(event, "organization", None)
+    name = None
+    if actor:
+        name = f"{actor.first_name or ''} {actor.last_name or ''}".strip() or None
+    return ActivityEventResponse(
+        id=event.id,
+        occurred_at=event.occurred_at,
+        organization_id=event.organization_id,
+        organization_name=org.name if org else None,
+        actor_user_id=event.actor_user_id,
+        actor_email=actor.email if actor else None,
+        actor_name=name,
+        event_type=event.event_type,
+        resource_type=event.resource_type,
+        resource_id=event.resource_id,
+        trace_id=event.trace_id,
+        parent_event_id=event.parent_event_id,
+        payload=event.payload or {},
+        ip_address=event.ip_address,
+        user_agent=event.user_agent,
+    )
+
+
+def _parse_event_cursor(cursor: Optional[str]) -> tuple[Optional[datetime], Optional[str]]:
+    if not cursor:
+        return None, None
+    try:
+        occurred_raw, event_id = cursor.split("|", 1)
+        return datetime.fromisoformat(occurred_raw), event_id
+    except (ValueError, TypeError):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid cursor format",
+        )
+
+
+@router.get(
+    "/organizations/{org_id}/events",
+    response_model=ActivityEventListResponse,
+)
+async def list_organization_events(
+    org_id: int,
+    event_type: Optional[str] = None,
+    event_prefix: Optional[str] = Query(
+        None, regex="^(auth|invite|org|session|admin)\\.?$"
+    ),
+    from_dt: Optional[datetime] = Query(None, alias="from"),
+    to_dt: Optional[datetime] = Query(None, alias="to"),
+    cursor: Optional[str] = None,
+    limit: int = Query(50, ge=1, le=200),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.SYSTEM_ADMIN)),
+):
+    """Paginated activity feed for an organization (SYSTEM_ADMIN only)."""
+    org = await db.execute(select(Organization).where(Organization.id == org_id))
+    if not org.scalar_one_or_none():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Organization with ID {org_id} not found",
+        )
+
+    cursor_occurred_at, cursor_id = _parse_event_cursor(cursor)
+    prefix = event_prefix.rstrip(".") + "." if event_prefix else None
+    events = await activity_emitter.list_for_organization(
+        db,
+        organization_id=org_id,
+        event_type=event_type,
+        event_type_prefix=prefix,
+        from_dt=from_dt,
+        to_dt=to_dt,
+        limit=limit + 1,
+        cursor_occurred_at=cursor_occurred_at,
+        cursor_id=cursor_id,
+    )
+    next_cursor = None
+    if len(events) > limit:
+        last = events[limit - 1]
+        next_cursor = f"{last.occurred_at.isoformat()}|{last.id}"
+        events = events[:limit]
+
+    return ActivityEventListResponse(
+        items=[_activity_event_to_response(e) for e in events],
+        next_cursor=next_cursor,
+    )
+
+
+@router.get("/events/recent", response_model=ActivityEventListResponse)
+async def list_recent_platform_events(
+    event_prefix: Optional[str] = Query(
+        None, regex="^(auth|invite|org|session|admin)\\.?$"
+    ),
+    limit: int = Query(40, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.SYSTEM_ADMIN)),
+):
+    """Recent cross-org activity for Platform Insights (SYSTEM_ADMIN only)."""
+    prefix = event_prefix.rstrip(".") + "." if event_prefix else None
+    events = await activity_emitter.list_recent(
+        db,
+        event_type_prefix=prefix,
+        limit=limit,
+    )
+    return ActivityEventListResponse(
+        items=[_activity_event_to_response(e) for e in events],
+        next_cursor=None,
+    )
+
+
+@router.get("/events/{event_id}", response_model=ActivityEventDetailResponse)
+async def get_activity_event(
+    event_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.SYSTEM_ADMIN)),
+):
+    """Event detail including siblings that share the same trace_id."""
+    event = await activity_emitter.get_event(db, event_id)
+    if not event:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found")
+
+    related = await activity_emitter.list_trace(db, event.trace_id)
+    base = _activity_event_to_response(event)
+    return ActivityEventDetailResponse(
+        **base.model_dump(),
+        related_events=[_activity_event_to_response(e) for e in related],
+    )
+
+
+@router.get("/traces/{trace_id}", response_model=ActivityTraceResponse)
+async def get_activity_trace(
+    trace_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.SYSTEM_ADMIN)),
+):
+    """Ordered event chain for a trace_id (SYSTEM_ADMIN only)."""
+    events = await activity_emitter.list_trace(db, trace_id)
+    if not events:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Trace not found")
+    return ActivityTraceResponse(
+        trace_id=trace_id,
+        events=[_activity_event_to_response(e) for e in events],
+    )
 
 
 @router.patch("/organizations/{org_id}", response_model=OrganizationResponse)

@@ -37,6 +37,8 @@ from app.api.dependencies import (
     check_session_access,
 )
 from app.services.knowledge_rag_service import ask_organization_knowledge, is_knowledge_base_enabled
+from app.services.activity_emitter import activity_emitter
+from app.services import activity_event_types as evt
 from app.services.knowledge_checklist_service import (
     list_session_contexts,
     get_item_context,
@@ -384,6 +386,23 @@ async def create_session(
     db.add(session)
     await db.commit()
     await db.refresh(session)
+
+    # Resolve org for activity stream
+    user_result = await db.execute(select(User).where(User.id == current_user_id))
+    actor = user_result.scalar_one_or_none()
+    await activity_emitter.emit(
+        db,
+        event_type=evt.SESSION_CREATED,
+        organization_id=actor.organization_id if actor else None,
+        actor_user_id=current_user_id,
+        resource_type="session",
+        resource_id=session.id,
+        payload={
+            "session_mode": session_mode.value,
+            "deal_stage": session.deal_stage,
+        },
+        commit=True,
+    )
 
     logger.info(f"Session {session.id} created by user {current_user_id} in {session_data.session_mode} mode")
 
@@ -1268,6 +1287,21 @@ async def submit_manual_checklist(
     await db.commit()
     await db.refresh(session)
 
+    await activity_emitter.emit(
+        db,
+        event_type=evt.SESSION_COMPLETED,
+        organization_id=current_user.organization_id,
+        actor_user_id=current_user.id,
+        resource_type="session",
+        resource_id=session_id,
+        payload={
+            "path": "manual_checklist",
+            "total_score": total_score,
+            "risk_band": risk_band.value if hasattr(risk_band, "value") else str(risk_band),
+        },
+        commit=True,
+    )
+
     logger.info(f"Session {session_id} scoring complete: {total_score} points, {risk_band.value} band (Version {next_version} created)")
 
     # Generate coaching feedback in background (without transcript)
@@ -1426,6 +1460,21 @@ async def submit_checklist(
     session.submitted_at = datetime.utcnow()
 
     await db.commit()
+
+    await activity_emitter.emit(
+        db,
+        event_type=evt.SESSION_COMPLETED,
+        organization_id=current_user.organization_id,
+        actor_user_id=current_user.id,
+        resource_type="session",
+        resource_id=session_id,
+        payload={
+            "path": "checklist_submit",
+            "total_score": total_score,
+            "risk_band": risk_band.value if hasattr(risk_band, "value") else str(risk_band),
+        },
+        commit=True,
+    )
 
     logger.info(f"Checklist submitted for session {session_id}")
     logger.info(f"Final score: {total_score}/100 ({items_yes} YES, {items_no} NO)")

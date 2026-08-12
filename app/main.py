@@ -13,6 +13,7 @@ from app.core.config import settings
 from app.api.v1.api import api_router
 from app.db.session import engine
 from app.models import Base
+from app.middleware.trace import TraceIdMiddleware
 
 
 # Configure logging
@@ -117,6 +118,9 @@ app.add_middleware(
 
 # GZip compression
 app.add_middleware(GZipMiddleware, minimum_size=1000)
+
+# First-party activity traces (P2)
+app.add_middleware(TraceIdMiddleware)
 
 # API router
 app.include_router(api_router, prefix=settings.API_V1_STR)

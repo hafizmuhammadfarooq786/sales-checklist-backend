@@ -166,6 +166,20 @@ class InvitationService:
             db, invitation, temp_password, frontend_url
         )
 
+        from app.services.activity_emitter import activity_emitter
+        from app.services import activity_event_types as evt
+
+        await activity_emitter.emit(
+            db,
+            event_type=evt.INVITE_CREATED,
+            organization_id=organization_id,
+            actor_user_id=invited_by,
+            resource_type="invitation",
+            resource_id=invitation.id,
+            payload={"email": email, "role": role, "team_id": team_id},
+            commit=False,
+        )
+
         if auto_commit:
             await db.commit()
         return invitation
@@ -256,6 +270,18 @@ class InvitationService:
 
         await self._send_invitation_email_for_record(
             db, invitation, temp_password, frontend_url, is_resend=True
+        )
+        from app.services.activity_emitter import activity_emitter
+        from app.services import activity_event_types as evt
+
+        await activity_emitter.emit(
+            db,
+            event_type=evt.INVITE_RESENT,
+            organization_id=organization_id,
+            resource_type="invitation",
+            resource_id=invitation.id,
+            payload={"email": invitation.email, "role": invitation.role},
+            commit=False,
         )
         await db.commit()
         await db.refresh(invitation)
@@ -379,6 +405,20 @@ class InvitationService:
 
         # Mark invitation as accepted
         invitation.accepted_at = datetime.utcnow()
+
+        from app.services.activity_emitter import activity_emitter
+        from app.services import activity_event_types as evt
+
+        await activity_emitter.emit(
+            db,
+            event_type=evt.INVITE_ACCEPTED,
+            organization_id=invitation.organization_id,
+            actor_user_id=user_id,
+            resource_type="invitation",
+            resource_id=invitation.id,
+            payload={"email": invitation.email, "role": invitation.role},
+            commit=False,
+        )
 
         await db.commit()
         return True

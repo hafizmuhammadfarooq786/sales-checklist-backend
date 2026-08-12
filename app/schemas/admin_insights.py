@@ -29,7 +29,7 @@ class OrganizationAdoptionStats(BaseModel):
 
 
 class OrganizationInsightsLive(BaseModel):
-    """Placeholder until P1 auth_sessions; always zeros in P0."""
+    """Live login visibility from auth_sessions (P1)."""
     active_auth_sessions: int = 0
     active_users_now: int = 0
 
@@ -50,6 +50,7 @@ class OrganizationWithUsageResponse(OrganizationResponse):
     deal_sessions_total: int = 0
     deal_sessions_last_30d: int = 0
     activation_status: ActivationStatus = "never_logged_in"
+    active_auth_sessions: int = 0
 
 
 class PlatformInsightsOverview(BaseModel):
@@ -63,4 +64,6 @@ class PlatformInsightsOverview(BaseModel):
     total_teams: int = 0
     deal_sessions_total: int = 0
     deal_sessions_last_30d: int = 0
+    active_auth_sessions: int = 0
+    active_users_now: int = 0
     organizations: List[OrganizationWithUsageResponse] = Field(default_factory=list)

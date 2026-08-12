@@ -10,6 +10,8 @@ from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Organization, Team, User
+from app.models.activity_event import ActivityEvent
+from app.models.auth_session import AuthSession
 from app.models.invitation import Invitation
 from app.models.organization_registration import (
     OrganizationRegistrationRequest,
@@ -26,6 +28,7 @@ from app.schemas.admin_insights import (
     PlatformInsightsOverview,
 )
 from app.schemas.organization import OrganizationResponse
+from app.services.auth_session_service import auth_session_service
 
 
 def _activation_status(
@@ -90,6 +93,8 @@ class AdminInsightsService:
         )
         deal_total, deal_30d = session_totals.one()
 
+        active_sessions, active_users = await auth_session_service.count_active(self.db)
+
         return PlatformInsightsOverview(
             total_organizations=len(orgs),
             active_organizations=sum(1 for o in orgs if o.is_active),
@@ -101,6 +106,8 @@ class AdminInsightsService:
             total_teams=int(teams_total),
             deal_sessions_total=int(deal_total or 0),
             deal_sessions_last_30d=int(deal_30d or 0),
+            active_auth_sessions=active_sessions,
+            active_users_now=active_users,
             organizations=with_usage,
         )
 
@@ -151,11 +158,18 @@ class AdminInsightsService:
             activation_status=usage.get("activation_status") or "never_logged_in",
         )
 
+        active_sessions, active_users = await auth_session_service.count_active(
+            self.db, organization_id=org_id
+        )
+
         return OrganizationInsightsResponse(
             organization=OrganizationResponse.model_validate(org),
             approved_at=approved_at,
             adoption=adoption,
-            live=OrganizationInsightsLive(),
+            live=OrganizationInsightsLive(
+                active_auth_sessions=active_sessions,
+                active_users_now=active_users,
+            ),
         )
 
     async def _approved_at(self, org_id: int) -> Optional[datetime]:
@@ -238,6 +252,39 @@ class AdminInsightsService:
             row.organization_id: row for row in session_rows.all() if row.organization_id is not None
         }
 
+        now = datetime.utcnow()
+        auth_rows = await self.db.execute(
+            select(
+                AuthSession.organization_id,
+                func.count(AuthSession.id).label("active_auth_sessions"),
+            )
+            .where(
+                AuthSession.organization_id.in_(ids),
+                AuthSession.revoked_at.is_(None),
+                AuthSession.expires_at > now,
+            )
+            .group_by(AuthSession.organization_id)
+        )
+        auth_map = {
+            row.organization_id: int(row.active_auth_sessions)
+            for row in auth_rows.all()
+            if row.organization_id is not None
+        }
+
+        event_rows = await self.db.execute(
+            select(
+                ActivityEvent.organization_id,
+                func.max(ActivityEvent.occurred_at).label("last_event_at"),
+            )
+            .where(ActivityEvent.organization_id.in_(ids))
+            .group_by(ActivityEvent.organization_id)
+        )
+        event_map = {
+            row.organization_id: row.last_event_at
+            for row in event_rows.all()
+            if row.organization_id is not None
+        }
+
         out: Dict[int, Dict] = {}
         for org_id in ids:
             u = user_map.get(org_id)
@@ -252,8 +299,11 @@ class AdminInsightsService:
             users_invited = int(inv.invited) if inv else 0
             users_accepted = int(inv.accepted) if inv else 0
             last_session = s.last_session_at if s else None
+            last_event = event_map.get(org_id)
 
-            last_activity_candidates = [d for d in (last_login, last_session) if d is not None]
+            last_activity_candidates = [
+                d for d in (last_login, last_session, last_event) if d is not None
+            ]
             last_activity_at = max(last_activity_candidates) if last_activity_candidates else None
             has_any_login = last_login is not None
 
@@ -270,6 +320,7 @@ class AdminInsightsService:
                 "teams_active": int(t.teams_active) if t else 0,
                 "deal_sessions_total": int(s.sessions_total) if s else 0,
                 "deal_sessions_last_30d": int(s.sessions_30d) if s else 0,
+                "active_auth_sessions": auth_map.get(org_id, 0),
                 "activation_status": _activation_status(
                     has_any_login=has_any_login,
                     users_invited=users_invited,
@@ -292,6 +343,7 @@ class AdminInsightsService:
             deal_sessions_total=int(usage.get("deal_sessions_total") or 0),
             deal_sessions_last_30d=int(usage.get("deal_sessions_last_30d") or 0),
             activation_status=usage.get("activation_status") or "never_logged_in",
+            active_auth_sessions=int(usage.get("active_auth_sessions") or 0),
         )
 
 
