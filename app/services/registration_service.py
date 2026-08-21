@@ -186,6 +186,24 @@ class OrganizationRegistrationService:
         request.reviewed_at = datetime.utcnow()
         request.rejection_reason = None
 
+        from app.services.activity_emitter import activity_emitter
+        from app.services import activity_event_types as evt
+
+        await activity_emitter.emit(
+            db,
+            event_type=evt.ORG_APPROVED,
+            organization_id=organization.id,
+            actor_user_id=reviewer.id,
+            resource_type="organization",
+            resource_id=organization.id,
+            payload={
+                "registration_request_id": request.id,
+                "company_name": request.company_name,
+                "invitations_sent": invitations_sent,
+            },
+            commit=False,
+        )
+
         await db.commit()
         await db.refresh(request)
         return request, organization.id, invitations_sent
@@ -205,6 +223,24 @@ class OrganizationRegistrationService:
         request.reviewed_by = reviewer.id
         request.reviewed_at = datetime.utcnow()
         request.rejection_reason = (reason or "").strip() or None
+
+        from app.services.activity_emitter import activity_emitter
+        from app.services import activity_event_types as evt
+
+        await activity_emitter.emit(
+            db,
+            event_type=evt.ORG_REJECTED,
+            organization_id=None,
+            actor_user_id=reviewer.id,
+            resource_type="registration_request",
+            resource_id=request.id,
+            payload={
+                "company_name": request.company_name,
+                "has_reason": bool(request.rejection_reason),
+            },
+            commit=False,
+        )
+
         await db.commit()
         await db.refresh(request)
 

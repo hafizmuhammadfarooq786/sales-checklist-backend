@@ -33,6 +33,8 @@ from app.models.organization_knowledge import (
     OrganizationKnowledgeDocument,
     OrganizationKnowledgeChunk,
 )
+from app.models.auth_session import AuthSession
+from app.models.activity_event import ActivityEvent
 
 # Export all for easy imports
 __all__ = [
@@ -71,4 +73,6 @@ __all__ = [
     "KnowledgeDocumentStatus",
     "OrganizationKnowledgeDocument",
     "OrganizationKnowledgeChunk",
+    "AuthSession",
+    "ActivityEvent",
 ]
