@@ -216,7 +216,7 @@ async def _load_framework_summary(db: AsyncSession, checklist_item_id: int) -> s
     if behavior and behavior.behaviour:
         lines.append(f"Expected behavior: {behavior.behaviour}")
     if questions:
-        lines.append("Evidence questions: " + "; ".join(questions[:5]))
+        lines.append("Evidence questions: " + "; ".join(questions))
     if reminder and reminder.keyreminder:
         lines.append(f"Key reminder: {reminder.keyreminder}")
     return "\n".join(lines)
