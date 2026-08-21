@@ -13,7 +13,7 @@ class Settings(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         case_sensitive=True,
-        extra="ignore",  # allow legacy .env keys (e.g. removed SENTRY_DSN) without failing startup
+        extra="ignore",  # allow .env keys without failing startup
     )
 
     # App
@@ -65,6 +65,18 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: str = Field(default="")
     OPENAI_MODEL_WHISPER: str = "whisper-1"
     OPENAI_MODEL_GPT: str = "gpt-4o"
+    OPENAI_MODEL_EMBEDDING: str = "text-embedding-3-small"
+
+    # Organization Knowledge Base
+    KNOWLEDGE_BASE_MIN_INDEXED_DOCUMENTS: int = Field(
+        default=1,
+        description="Minimum successfully indexed documents before intelligence is enabled",
+    )
+    KNOWLEDGE_BASE_MAX_FILE_BYTES: int = Field(default=20 * 1024 * 1024)
+    KNOWLEDGE_BASE_CHUNK_SIZE: int = Field(default=1200)
+    KNOWLEDGE_BASE_CHUNK_OVERLAP: int = Field(default=200)
+    KNOWLEDGE_BASE_RAG_TOP_K: int = Field(default=6)
+    USE_CELERY_FOR_KNOWLEDGE_BASE: bool = Field(default=False)
 
     # Celery
     CELERY_BROKER_URL: str = Field(default="redis://localhost:6379/1")

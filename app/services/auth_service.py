@@ -38,7 +38,7 @@ class AuthService:
         return self.pwd_context.verify(plain_password, hashed_password)
 
     def create_access_token(
-        self, data: dict, expires_delta: Optional[timedelta] = None
+        self, data: dict, expires_delta: Optional[timedelta] = None, jti: Optional[str] = None
     ) -> str:
         """Create a JWT access token"""
         to_encode = data.copy()
@@ -51,6 +51,8 @@ class AuthService:
             )
 
         to_encode.update({"exp": expire})
+        if jti:
+            to_encode["jti"] = jti
         encoded_jwt = jwt.encode(to_encode, self.secret_key, algorithm=self.algorithm)
         return encoded_jwt
 
@@ -168,7 +170,10 @@ class AuthService:
         return user
 
     async def create_token_response(
-        self, user: User, remember_me: bool = False
+        self,
+        user: User,
+        remember_me: bool = False,
+        jti: Optional[str] = None,
     ) -> Token:
         """
         Create a complete token response with user data.
@@ -184,6 +189,7 @@ class AuthService:
         access_token = self.create_access_token(
             data={"sub": str(user.id), "email": user.email, "role": user.role.value},
             expires_delta=expires_delta,
+            jti=jti,
         )
 
         user_response = UserResponse(
@@ -208,6 +214,11 @@ class AuthService:
             expires_in=int(expires_delta.total_seconds()),
             user=user_response,
         )
+
+    def token_expiry_datetime(self, remember_me: bool = False) -> datetime:
+        if remember_me:
+            return datetime.utcnow() + timedelta(days=settings.REMEMBER_ME_TOKEN_EXPIRE_DAYS)
+        return datetime.utcnow() + timedelta(minutes=settings.SESSION_TOKEN_EXPIRE_MINUTES)
 
     async def verify_email(self, db: AsyncSession, token: str) -> Optional[User]:
         """Verify email with token and return the user"""

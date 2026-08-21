@@ -56,7 +56,7 @@ class OrganizationRegistrationService:
             admin_first_name=payload.admin_first_name.strip(),
             admin_last_name=payload.admin_last_name.strip(),
             admin_email=admin_email,
-            admin_direct_dial=payload.admin_direct_dial.strip(),
+            admin_direct_dial=(payload.admin_direct_dial or "").strip(),
             admin_cell_phone=(payload.admin_cell_phone or "").strip() or None,
             additional_users=[user.model_dump(mode="json") for user in payload.additional_users],
         )
@@ -136,7 +136,7 @@ class OrganizationRegistrationService:
             first_name=request.admin_first_name.strip(),
             last_name=request.admin_last_name.strip(),
             job_title=getattr(request, "admin_job_title", None) or "Executive Sponsor",
-            direct_dial=request.admin_direct_dial,
+            direct_dial=(request.admin_direct_dial or "").strip() or None,
             cell_phone=request.admin_cell_phone,
             organization_id=organization.id,
             role=UserRole.ADMIN,
@@ -186,6 +186,24 @@ class OrganizationRegistrationService:
         request.reviewed_at = datetime.utcnow()
         request.rejection_reason = None
 
+        from app.services.activity_emitter import activity_emitter
+        from app.services import activity_event_types as evt
+
+        await activity_emitter.emit(
+            db,
+            event_type=evt.ORG_APPROVED,
+            organization_id=organization.id,
+            actor_user_id=reviewer.id,
+            resource_type="organization",
+            resource_id=organization.id,
+            payload={
+                "registration_request_id": request.id,
+                "company_name": request.company_name,
+                "invitations_sent": invitations_sent,
+            },
+            commit=False,
+        )
+
         await db.commit()
         await db.refresh(request)
         return request, organization.id, invitations_sent
@@ -205,6 +223,24 @@ class OrganizationRegistrationService:
         request.reviewed_by = reviewer.id
         request.reviewed_at = datetime.utcnow()
         request.rejection_reason = (reason or "").strip() or None
+
+        from app.services.activity_emitter import activity_emitter
+        from app.services import activity_event_types as evt
+
+        await activity_emitter.emit(
+            db,
+            event_type=evt.ORG_REJECTED,
+            organization_id=None,
+            actor_user_id=reviewer.id,
+            resource_type="registration_request",
+            resource_id=request.id,
+            payload={
+                "company_name": request.company_name,
+                "has_reason": bool(request.rejection_reason),
+            },
+            commit=False,
+        )
+
         await db.commit()
         await db.refresh(request)
 

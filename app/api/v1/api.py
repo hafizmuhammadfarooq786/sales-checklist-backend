@@ -19,6 +19,7 @@ from app.api.v1.endpoints import (
     manager_dashboard,
     notes,
     public_registration,
+    knowledge_base,
 )
 api_router = APIRouter()
 
@@ -40,6 +41,11 @@ api_router.include_router(
     tags=["Public Registration"],
 )
 api_router.include_router(organization.router, prefix="/organization", tags=["Organization Management"])
+api_router.include_router(
+    knowledge_base.router,
+    prefix="/organization/knowledge-base",
+    tags=["Organization Knowledge Base"],
+)
 api_router.include_router(manager_notes.router, prefix="/sessions", tags=["Manager Notes"])
 api_router.include_router(manager_dashboard.router, prefix="/manager/dashboard", tags=["Manager Dashboard"])
 api_router.include_router(notes.router, prefix="/notes", tags=["Checklist Item Notes"])
