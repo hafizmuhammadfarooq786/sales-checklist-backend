@@ -4,7 +4,7 @@ from typing import List, Optional
 
 from pydantic import BaseModel, EmailStr, Field, ValidationInfo, field_validator
 
-from app.schemas.organization import INDUSTRY_OPTIONS, _validate_phone_optional
+from app.schemas.organization import normalize_industry_value, _validate_phone_optional
 from app.utils.email_validation import validate_email_address
 from app.models.organization_registration import RegistrationStatus
 
@@ -14,7 +14,7 @@ class SignupUserRow(BaseModel):
     last_name: str = Field(..., min_length=1, max_length=100)
     email: EmailStr
     role: str = Field(..., pattern="^(rep|manager)$")
-    direct_dial: str = Field(..., max_length=50)
+    direct_dial: Optional[str] = Field(None, max_length=50)
     cell_phone: Optional[str] = Field(None, max_length=50)
 
     @field_validator("email", mode="before")
@@ -31,11 +31,8 @@ class SignupUserRow(BaseModel):
 
     @field_validator("direct_dial", mode="before")
     @classmethod
-    def validate_direct_dial(cls, value: str) -> str:
-        cleaned = _validate_phone_optional(value)
-        if not cleaned:
-            raise ValueError("Direct dial is required")
-        return cleaned
+    def validate_direct_dial(cls, value: Optional[str]) -> Optional[str]:
+        return _validate_phone_optional(value)
 
     @field_validator("cell_phone", mode="before")
     @classmethod
@@ -49,7 +46,7 @@ class OrganizationRegistrationCreate(BaseModel):
     admin_first_name: str = Field(..., min_length=1, max_length=100)
     admin_last_name: str = Field(..., min_length=1, max_length=100)
     admin_email: EmailStr
-    admin_direct_dial: str = Field(..., max_length=50)
+    admin_direct_dial: Optional[str] = Field(None, max_length=50)
     admin_cell_phone: Optional[str] = Field(None, max_length=50)
     additional_users: List[SignupUserRow] = Field(default_factory=list)
 
@@ -63,18 +60,14 @@ class OrganizationRegistrationCreate(BaseModel):
     @field_validator("industry", mode="before")
     @classmethod
     def normalize_industry(cls, value: str) -> str:
-        cleaned = str(value).strip()
-        if cleaned not in INDUSTRY_OPTIONS:
-            raise ValueError("Invalid industry")
+        cleaned = normalize_industry_value(value, required=True)
+        assert cleaned is not None
         return cleaned
 
     @field_validator("admin_direct_dial", mode="before")
     @classmethod
-    def validate_admin_direct_dial(cls, value: str) -> str:
-        cleaned = _validate_phone_optional(value)
-        if not cleaned:
-            raise ValueError("Direct dial is required")
-        return cleaned
+    def validate_admin_direct_dial(cls, value: Optional[str]) -> Optional[str]:
+        return _validate_phone_optional(value)
 
     @field_validator("admin_cell_phone", mode="before")
     @classmethod
@@ -102,8 +95,7 @@ class SignupUserRowResponse(BaseModel):
     first_name: str
     last_name: str
     email: EmailStr
-    role: str
-    direct_dial: str
+    direct_dial: Optional[str] = None
     cell_phone: Optional[str] = None
 
 

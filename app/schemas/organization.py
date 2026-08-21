@@ -11,20 +11,62 @@ from app.utils.us_phone_validation import validate_us_phone_value
 
 PHONE_PATTERN = re.compile(r"^[\d\s+\-().extEXT#]{7,30}$")
 
+OTHER_INDUSTRY_OPTION = "Other, Please Specify"
+
 INDUSTRY_OPTIONS: List[str] = [
-    "Technology",
-    "Financial Services",
-    "Healthcare",
-    "Manufacturing",
-    "Retail",
-    "Professional Services",
-    "Education",
-    "Government",
-    "Real Estate",
+    "Aerospace & Defense",
+    "Agriculture & Agribusiness",
+    "Architecture, Engineering & Design Services",
+    "Automotive & Mobility",
+    "Automation, Robotics & Motion Control",
+    "Building Materials & Construction Products",
+    "Chemicals, Adhesives & Specialty Materials",
+    "Construction & Contracting",
+    "Consumer Products",
+    "Distribution & Wholesale",
+    "Education & Training",
+    "Electrical Equipment & Power Management",
+    "Electronics & Components",
+    "Energy, Oil & Gas & Utilities",
+    "Environmental Services & Sustainability",
+    "Financial Services & Insurance",
+    "Food & Beverage",
+    "Government & Public Sector",
+    "Healthcare Services",
+    "Hospitality & Travel",
+    "HVAC, Plumbing & Mechanical Systems",
+    "Industrial Equipment & Machinery",
+    "Information Technology, Software & SaaS",
+    "Laboratory & Scientific Equipment",
+    "Life Sciences, Biotechnology & Pharmaceuticals",
+    "Logistics, Transportation & Supply Chain",
+    "Machine Tools & Metalworking",
+    "Manufacturing — General",
+    "Medical Devices & Diagnostics",
+    "Mining, Metals & Minerals",
+    "Nonprofit Organizations & Associations",
+    "Packaging, Plastics & Converting",
+    "Private Equity, M&A & Investment Firms",
+    "Professional & Business Services",
+    "Real Estate & Property Management",
+    "Retail & E-commerce",
+    "Security, Cybersecurity & Compliance",
     "Telecommunications",
-    "Energy",
-    "Other",
+    "Textiles, Apparel & Footwear",
+    "Waste Management, Recycling & Compaction Equipment",
+    "Water & Wastewater",
+    OTHER_INDUSTRY_OPTION,
 ]
+
+def normalize_industry_value(value: Optional[str], *, required: bool = False) -> Optional[str]:
+    cleaned = str(value or "").strip()
+    if not cleaned:
+        if required:
+            raise ValueError("Industry is required")
+        return None
+    if cleaned == OTHER_INDUSTRY_OPTION:
+        raise ValueError("Please specify your industry")
+    return cleaned
 
 
 def _validate_phone_optional(value: Optional[str]) -> Optional[str]:
@@ -66,9 +108,7 @@ class OrganizationAdminUpdate(BaseModel):
     @field_validator("industry", mode="before")
     @classmethod
     def normalize_industry(cls, v: Optional[str]) -> Optional[str]:
-        if v is None or not str(v).strip():
-            return None
-        return str(v).strip()
+        return normalize_industry_value(v)
 
 
 class OrganizationResponse(OrganizationBase):
@@ -173,9 +213,7 @@ class OrganizationProfileUpdate(BaseModel):
     @field_validator("industry", mode="before")
     @classmethod
     def normalize_industry(cls, v: Optional[str]) -> Optional[str]:
-        if v is None or not str(v).strip():
-            return None
-        return str(v).strip()
+        return normalize_industry_value(v)
 
     @field_validator("default_role", mode="before")
     @classmethod

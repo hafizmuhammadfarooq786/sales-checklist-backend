@@ -56,7 +56,7 @@ class OrganizationRegistrationService:
             admin_first_name=payload.admin_first_name.strip(),
             admin_last_name=payload.admin_last_name.strip(),
             admin_email=admin_email,
-            admin_direct_dial=payload.admin_direct_dial.strip(),
+            admin_direct_dial=(payload.admin_direct_dial or "").strip(),
             admin_cell_phone=(payload.admin_cell_phone or "").strip() or None,
             additional_users=[user.model_dump(mode="json") for user in payload.additional_users],
         )
@@ -136,7 +136,7 @@ class OrganizationRegistrationService:
             first_name=request.admin_first_name.strip(),
             last_name=request.admin_last_name.strip(),
             job_title=getattr(request, "admin_job_title", None) or "Executive Sponsor",
-            direct_dial=request.admin_direct_dial,
+            direct_dial=(request.admin_direct_dial or "").strip() or None,
             cell_phone=request.admin_cell_phone,
             organization_id=organization.id,
             role=UserRole.ADMIN,
