@@ -135,14 +135,17 @@ class ChecklistReviewResponse(BaseModel):
 
 class ChecklistItemUpdate(BaseModel):
     """Schema for updating a single checklist item (manual override)"""
-    user_answer: bool = Field(..., description="User's answer: True = Yes, False = No")
+    user_answer: Optional[bool] = Field(
+        None,
+        description="User's answer: True = Yes, False = No, None = unanswered",
+    )
 
 
 class ChecklistItemUpdateResponse(BaseModel):
     """Response after updating a single item"""
     item_id: int
     ai_answer: bool
-    user_answer: bool
+    user_answer: Optional[bool]
     was_changed: bool
     score: int
     message: str

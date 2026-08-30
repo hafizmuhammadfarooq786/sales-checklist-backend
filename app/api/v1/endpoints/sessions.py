@@ -1094,7 +1094,7 @@ async def update_checklist_item(
             detail="Session not found"
         )
 
-    # Get the session response
+    # Get or create the session response (blank grid cells have no row yet)
     response_result = await db.execute(
         select(SessionResponseModel).where(
             SessionResponseModel.session_id == session_id,
@@ -1103,24 +1103,57 @@ async def update_checklist_item(
     )
     response = response_result.scalar_one_or_none()
 
-    if not response:
+    item = await db.get(ChecklistItem, item_id)
+    if not item or not item.is_active:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Checklist item not found"
         )
 
-    # Update user answer
-    response.user_answer = update_data.user_answer
-    response.was_changed = (response.user_answer != response.ai_answer)
+    if update_data.user_answer is None:
+        if response is not None:
+            await db.delete(response)
+            await db.commit()
+        return ChecklistItemUpdateResponse(
+            item_id=item_id,
+            ai_answer=False,
+            user_answer=None,
+            was_changed=False,
+            score=0,
+            message="Checklist item cleared"
+        )
 
-    # Recalculate score based on final answer
-    final_answer = response.user_answer if response.user_answer is not None else response.ai_answer
-    response.score = 10 if final_answer else 0
+    if response is None:
+        response = SessionResponseModel(
+            session_id=session_id,
+            item_id=item_id,
+            ai_answer=update_data.user_answer,
+            ai_reasoning="Updated from coaching report",
+            user_answer=update_data.user_answer,
+            was_changed=False,
+            score=10 if update_data.user_answer else 0,
+        )
+        db.add(response)
+    else:
+        response.user_answer = update_data.user_answer
+        response.was_changed = response.user_answer != response.ai_answer
+        final_answer = (
+            response.user_answer
+            if response.user_answer is not None
+            else response.ai_answer
+        )
+        response.score = 10 if final_answer else 0
 
     await db.commit()
     await db.refresh(response)
 
-    logger.info(f"Item {item_id} updated: AI={response.ai_answer}, User={response.user_answer}, Score={response.score}")
+    logger.info(
+        "Item %s updated: AI=%s, User=%s, Score=%s",
+        item_id,
+        response.ai_answer,
+        response.user_answer,
+        response.score,
+    )
 
     return ChecklistItemUpdateResponse(
         item_id=item_id,
