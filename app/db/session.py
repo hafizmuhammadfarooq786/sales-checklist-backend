@@ -1,7 +1,9 @@
 """
 Database session configuration
 """
+from sqlalchemy import create_engine
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
+from sqlalchemy.orm import sessionmaker
 from app.core.config import settings
 
 
@@ -10,6 +12,15 @@ def _async_connect_args(database_url: str) -> dict:
     if "+asyncpg" in database_url:
         return {"statement_cache_size": 0}
     return {}
+
+
+def sync_database_url(database_url: str) -> str:
+    """Convert an async SQLAlchemy URL to a sync driver URL (psycopg2)."""
+    url = database_url or ""
+    for suffix in ("+asyncpg", "+psycopg2", "+psycopg"):
+        if suffix in url:
+            return url.replace(suffix, "", 1)
+    return url
 
 
 # Create async engine
@@ -30,6 +41,22 @@ AsyncSessionLocal = async_sessionmaker(
     expire_on_commit=False,
     autocommit=False,
     autoflush=False,
+)
+
+sync_engine = create_engine(
+    sync_database_url(settings.DATABASE_URL),
+    echo=settings.DB_ECHO,
+    future=True,
+    pool_pre_ping=True,
+    pool_size=5,
+    max_overflow=5,
+)
+
+SyncSessionLocal = sessionmaker(
+    bind=sync_engine,
+    autocommit=False,
+    autoflush=False,
+    expire_on_commit=False,
 )
 
 

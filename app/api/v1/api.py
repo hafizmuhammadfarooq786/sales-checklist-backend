@@ -14,6 +14,7 @@ from app.api.v1.endpoints import (
     coaching,
     reports,
     admin,
+    admin_email_templates,
     organization,
     manager_notes,
     manager_dashboard,
@@ -36,6 +37,11 @@ api_router.include_router(coaching.router, prefix="/sessions", tags=["Coaching"]
 api_router.include_router(reports.router, prefix="/sessions", tags=["Reports"])
 api_router.include_router(users.router, prefix="/users", tags=["Users"])
 api_router.include_router(admin.router, prefix="/admin", tags=["Admin - SYSTEM_ADMIN"])
+api_router.include_router(
+    admin_email_templates.router,
+    prefix="/admin",
+    tags=["Admin - Email Templates"],
+)
 api_router.include_router(
     public_registration.router,
     prefix="/public",

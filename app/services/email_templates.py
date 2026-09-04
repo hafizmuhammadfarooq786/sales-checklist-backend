@@ -1,362 +1,133 @@
 """
-Transactional email templates — aligned with frontend brand tokens (brand-tokens.css).
+Transactional email templates.
 
-Colors: navy #0b2e59, intel #0550c3, strong #198754, warn #f59e0b, critical #b91c1c,
-        appbg #f5f6f8, surface #ffffff, line #d7dce3, ink #0b1220, ink-muted #5b6473
+Visual system matches Fortune 50 / enterprise mail (Apple, IBM, JPMorgan, Stripe):
+white canvas, no fills, no tinted banners. Hierarchy comes from type and color only.
+
+  Navy     #0b2e59  wordmark, headings, primary action
+  Ink      #111111  body copy
+  Muted    #5b6473  labels, supporting text, footer
+  Intel    #0550c3  secondary links (fallback URLs)
+  Critical #b91c1c  expiry / security — text only
+  Line     #d7dce3  hairlines
 """
 
-EMAIL_BASE_CSS = """
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+# Email-safe stack. Google Fonts are stripped by Outlook and many webmail clients.
+FONT = (
+    "-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif"
+)
 
-* { box-sizing: border-box; margin: 0; padding: 0; }
-
-body, table, td, p, a, li, h1, span, div {
-  font-family: 'Inter', Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif !important;
-}
-
-body {
-  background-color: #f5f6f8 !important;
-  color: #0b1220 !important;
+EMAIL_BASE_CSS = f"""
+* {{ box-sizing: border-box; margin: 0; padding: 0; }}
+body, table, td, p, a, li, h1, span, div {{
+  font-family: {FONT} !important;
+}}
+body {{
+  background: #ffffff !important;
+  color: #111111 !important;
   -webkit-font-smoothing: antialiased !important;
-  -moz-osx-font-smoothing: grayscale !important;
-  padding: 32px 16px !important;
-  line-height: 1.6 !important;
-}
-
-.email-wrapper { max-width: 600px; margin: 0 auto !important; }
-
-.pre-header {
-  padding: 0 4px 20px;
-  border-bottom: 1px solid #d7dce3;
-  margin-bottom: 0;
-}
-
-.pre-header-table { width: 100%; border-collapse: collapse; }
-.pre-header-table td { vertical-align: middle; }
-
-.wordmark {
-  font-size: 12px !important;
-  font-weight: 700 !important;
-  letter-spacing: 0.08em !important;
-  text-transform: uppercase !important;
-  color: #0b2e59 !important;
-}
-
-.badge {
-  display: inline-block;
-  font-size: 10px !important;
-  font-weight: 600 !important;
-  letter-spacing: 0.06em !important;
-  text-transform: uppercase !important;
-  border-radius: 999px !important;
-  padding: 4px 10px !important;
-  white-space: nowrap;
-}
-.badge-intel { color: #0550c3 !important; background: #e5f1fd !important; border: 1px solid #b8d4f8 !important; }
-.badge-strong { color: #198754 !important; background: #eaf7f0 !important; border: 1px solid #b8e6cc !important; }
-.badge-warn { color: #b45309 !important; background: #fff4e5 !important; border: 1px solid #fcd9a8 !important; }
-.badge-critical { color: #b91c1c !important; background: #fdecec !important; border: 1px solid #f5c2c2 !important; }
-
-.card {
-  background: #ffffff !important;
-  border: 1px solid #d7dce3 !important;
-  border-radius: 8px !important;
-  overflow: hidden !important;
-  box-shadow: 0 1px 2px rgba(11, 46, 89, 0.06) !important;
-}
-
-.header {
-  background: linear-gradient(135deg, #001a41 0%, #0b2e59 100%) !important;
-  padding: 36px 32px 32px !important;
-  position: relative;
-}
-
-.header-accent {
-  display: inline-block;
-  width: 40px;
-  height: 3px;
-  background: #0550c3 !important;
-  border-radius: 2px;
-  margin-bottom: 16px;
-}
-
-.header-eyebrow {
-  font-size: 11px !important;
-  font-weight: 600 !important;
-  letter-spacing: 0.1em !important;
-  text-transform: uppercase !important;
-  color: #7eb3ff !important;
-  margin-bottom: 10px !important;
-}
-
-.header h1 {
-  font-size: 26px !important;
-  font-weight: 700 !important;
-  color: #ffffff !important;
-  line-height: 1.25 !important;
-  letter-spacing: -0.02em !important;
-  margin-bottom: 8px !important;
-}
-
-.header h1 .accent { color: #ffd526 !important; }
-
-.header-sub {
-  font-size: 15px !important;
-  color: #e5f1fd !important;
-  font-weight: 400 !important;
-  line-height: 1.5 !important;
-}
-
-.content { padding: 32px !important; }
-
-.intro-text {
-  font-size: 15px !important;
-  color: #5b6473 !important;
-  line-height: 1.65 !important;
-  margin-bottom: 24px !important;
-}
-.intro-text strong { color: #0b1220 !important; font-weight: 600 !important; }
-
-.section-label {
-  font-size: 11px !important;
-  font-weight: 600 !important;
-  letter-spacing: 0.08em !important;
-  text-transform: uppercase !important;
-  color: #5b6473 !important;
-  margin-bottom: 10px !important;
-}
-
-.details-grid {
-  display: table;
-  width: 100%;
-  border-collapse: separate;
-  border-spacing: 0;
-  border: 1px solid #d7dce3 !important;
-  border-radius: 8px !important;
-  overflow: hidden;
-  margin-bottom: 24px !important;
-}
-.detail-cell {
-  display: table-cell;
-  width: 50%;
-  padding: 16px 18px !important;
-  background: #f5f6f8 !important;
-  border-right: 1px solid #d7dce3 !important;
-  vertical-align: top;
-}
-.detail-cell:last-child { border-right: none !important; }
-.detail-label {
-  font-size: 10px !important;
-  font-weight: 600 !important;
-  letter-spacing: 0.08em !important;
-  text-transform: uppercase !important;
-  color: #5b6473 !important;
-  margin-bottom: 6px !important;
-}
-.detail-value {
-  font-size: 14px !important;
-  font-weight: 600 !important;
-  color: #0b1220 !important;
-}
-
-.role-pill {
-  display: inline-block;
-  font-size: 12px !important;
-  font-weight: 600 !important;
-  color: #198754 !important;
-  background: #eaf7f0 !important;
-  border: 1px solid #b8e6cc !important;
-  border-radius: 999px !important;
-  padding: 2px 10px !important;
-}
-
-.creds-box {
-  background: #e5f1fd !important;
-  border-radius: 8px !important;
-  padding: 18px 20px !important;
-  margin-bottom: 20px !important;
-  border: 1px solid #b8d4f8 !important;
-}
-.cred-row { margin-bottom: 14px !important; }
-.cred-row:last-child { margin-bottom: 0 !important; }
-.cred-key {
-  display: block;
-  font-size: 10px !important;
-  font-weight: 600 !important;
-  letter-spacing: 0.08em !important;
-  text-transform: uppercase !important;
-  color: #5b6473 !important;
-  margin-bottom: 6px !important;
-}
-.cred-value {
-  font-size: 15px !important;
-  font-weight: 600 !important;
-  color: #0b1220 !important;
-  word-break: break-all !important;
-  text-decoration: none !important;
-}
-.cred-value a {
-  color: #0b1220 !important;
-  text-decoration: none !important;
-  pointer-events: none !important;
-}
-.cred-password {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace !important;
-  letter-spacing: 0.04em !important;
-  color: #0b1220 !important;
-}
-
-.banner {
-  border-radius: 8px !important;
-  padding: 14px 16px !important;
-  margin-bottom: 24px !important;
-  font-size: 14px !important;
-  line-height: 1.55 !important;
-}
-.banner-strong { background: #eaf7f0 !important; border: 1px solid #b8e6cc !important; color: #166534 !important; }
-.banner-warn { background: #fff4e5 !important; border: 1px solid #fcd9a8 !important; color: #92400e !important; }
-.banner-critical { background: #fdecec !important; border: 1px solid #f5c2c2 !important; color: #991b1b !important; }
-.banner strong { font-weight: 600 !important; }
-
-.notice {
-  background: #fff4e5 !important;
-  border: 1px solid #fcd9a8 !important;
-  border-radius: 8px !important;
-  padding: 14px 16px !important;
-  margin-bottom: 24px !important;
-}
-.notice-text { font-size: 13px !important; color: #92400e !important; line-height: 1.55 !important; }
-
-.cta-section { text-align: center; margin: 28px 0 !important; }
-.cta-button {
-  display: inline-block;
-  background: #0550c3 !important;
-  color: #ffffff !important;
-  text-decoration: none !important;
-  font-size: 14px !important;
-  font-weight: 600 !important;
-  padding: 13px 28px !important;
-  border-radius: 8px !important;
-  border: 1px solid #0446a8 !important;
-}
-.cta-sub {
-  margin-top: 10px !important;
-  font-size: 12px !important;
-  color: #5b6473 !important;
-}
-
-.divider { height: 1px; background: #d7dce3; margin: 24px 0 !important; }
-
-.fallback-url {
-  background: #f5f6f8 !important;
-  border: 1px solid #d7dce3 !important;
-  border-radius: 8px !important;
-  padding: 14px 16px !important;
-  margin-bottom: 24px !important;
-}
-.fallback-label {
-  font-size: 10px !important;
-  font-weight: 600 !important;
-  letter-spacing: 0.08em !important;
-  text-transform: uppercase !important;
-  color: #5b6473 !important;
-  margin-bottom: 6px !important;
-}
-.fallback-link {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace !important;
-  font-size: 11px !important;
-  color: #0550c3 !important;
-  word-break: break-all !important;
-  line-height: 1.6 !important;
-}
-
-.steps-table {
-  width: 100% !important;
-  border-collapse: collapse !important;
   margin: 0 !important;
-}
-.step-row td {
-  padding: 12px 0 !important;
-  border-bottom: 1px solid #d7dce3 !important;
-  vertical-align: middle !important;
-}
-.step-row:last-child td { border-bottom: none !important; }
-.step-num-cell {
-  width: 36px !important;
-  padding-right: 14px !important;
-  vertical-align: middle !important;
-}
-.step-num-badge {
-  width: 28px !important;
-  height: 28px !important;
-  min-width: 28px !important;
-  min-height: 28px !important;
-  background: #e5f1fd !important;
-  color: #0550c3 !important;
-  font-size: 13px !important;
-  font-weight: 700 !important;
-  border-radius: 6px !important;
-  text-align: center !important;
-  vertical-align: middle !important;
   padding: 0 !important;
-  mso-line-height-rule: exactly;
-}
-.step-text {
-  font-size: 14px !important;
-  color: #5b6473 !important;
-  line-height: 1.5 !important;
-  vertical-align: middle !important;
-}
-
-.features-grid {
-  border: 1px solid #d7dce3 !important;
-  border-radius: 8px !important;
-  overflow: hidden;
-  margin-bottom: 24px !important;
-}
-.feature-cell {
-  padding: 16px 18px !important;
-  background: #ffffff !important;
-  border-bottom: 1px solid #d7dce3 !important;
-  font-size: 14px !important;
-  font-weight: 600 !important;
-  color: #0b1220 !important;
-}
-.feature-cell:nth-child(odd) { background: #f5f6f8 !important; }
-
-.body-text {
-  font-size: 14px !important;
-  color: #5b6473 !important;
-  line-height: 1.65 !important;
-}
-
-.footer {
-  padding: 20px 4px 0 !important;
-  border-top: 1px solid #d7dce3;
-  margin-top: 20px;
-}
-.footer-copy {
-  font-size: 12px !important;
-  color: #5b6473 !important;
-  line-height: 1.55 !important;
-}
-.footer-aside {
-  font-size: 12px !important;
-  color: #5b6473 !important;
-  line-height: 1.55 !important;
-  margin-top: 8px !important;
-}
-
-@media (max-width: 520px) {
-  .header, .content { padding: 24px 20px !important; }
-  .header h1 { font-size: 22px !important; }
-  .detail-cell { display: block !important; width: 100% !important; border-right: none !important; border-bottom: 1px solid #d7dce3 !important; }
-  .detail-cell:last-child { border-bottom: none !important; }
-}
+}}
+a {{ color: #0550c3; }}
 """
 
 
-def _shell(title: str, body: str) -> str:
+def _preheader(text: str) -> str:
+    return (
+        f'<div style="display:none;max-height:0;overflow:hidden;mso-hide:all;'
+        f'font-size:1px;line-height:1px;color:#ffffff;opacity:0;">{text}&nbsp;&zwnj;'
+        f'&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;</div>'
+    )
+
+
+def _brand_bar() -> str:
+    return f"""
+<p style="margin:0;font-size:11px;font-weight:700;letter-spacing:0.14em;text-transform:uppercase;color:#0b2e59;font-family:{FONT};">{{{{ project_name }}}}</p>
+<div style="height:1px;background:#d7dce3;line-height:1px;font-size:1px;margin:20px 0 32px;">&nbsp;</div>
+"""
+
+
+def _h1(text: str) -> str:
+    return (
+        f'<h1 style="margin:0 0 16px;font-size:22px;line-height:1.3;font-weight:600;'
+        f'letter-spacing:-0.02em;color:#0b2e59;font-family:{FONT};">{text}</h1>'
+    )
+
+
+def _p(text: str, *, margin: str = "0 0 16px") -> str:
+    return (
+        f'<p style="margin:{margin};font-size:15px;line-height:1.65;color:#111111;'
+        f'font-family:{FONT};">{text}</p>'
+    )
+
+
+def _muted(text: str, *, margin: str = "0 0 16px") -> str:
+    return (
+        f'<p style="margin:{margin};font-size:14px;line-height:1.6;color:#5b6473;'
+        f'font-family:{FONT};">{text}</p>'
+    )
+
+
+def _critical(text: str) -> str:
+    return (
+        f'<p style="margin:0 0 8px;font-size:14px;line-height:1.6;color:#b91c1c;'
+        f'font-family:{FONT};">{text}</p>'
+    )
+
+
+def _cta(href: str, label: str) -> str:
+    return f"""
+<p style="margin:28px 0 8px;font-family:{FONT};">
+  <a href="{href}" style="display:inline-block;padding:4px 0;font-size:16px;line-height:1.4;font-weight:600;color:#0b2e59;text-decoration:underline;text-underline-offset:3px;">{label}</a>
+</p>
+"""
+
+
+def _fallback(href: str) -> str:
+    return f"""
+<p style="margin:16px 0 0;font-size:13px;line-height:1.55;color:#5b6473;font-family:{FONT};">
+  If the link does not open, copy this URL into your browser:<br />
+  <a href="{href}" style="color:#0550c3;word-break:break-all;text-decoration:underline;">{href}</a>
+</p>
+"""
+
+
+def _kv(label: str, value: str) -> str:
+    return f"""
+<p style="margin:0 0 16px;font-family:{FONT};">
+  <span style="display:block;font-size:11px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:#5b6473;">{label}</span>
+  <span style="display:block;margin-top:4px;font-size:15px;font-weight:600;color:#111111;">{value}</span>
+</p>
+"""
+
+
+def _steps(items: list[str]) -> str:
+    lis = "".join(
+        f'<li style="margin:0 0 8px;padding:0;">{item}</li>' for item in items
+    )
+    return (
+        f'<ol style="margin:8px 0 0;padding-left:20px;font-size:15px;line-height:1.55;'
+        f'color:#111111;font-family:{FONT};">{lis}</ol>'
+    )
+
+
+def _signoff() -> str:
+    return _p("Thank you,<br />{{ project_name }}", margin="32px 0 0")
+
+
+def _footer(reason: str, sent_to: str = "{{ user_email }}") -> str:
+    return f"""
+<div style="height:1px;background:#d7dce3;line-height:1px;font-size:1px;margin:40px 0 16px;">&nbsp;</div>
+<p style="margin:0;font-size:12px;line-height:1.55;color:#5b6473;font-family:{FONT};">
+  &copy; {{{{ current_year }}}} {{{{ company_name }}}}<br />
+  Sent to {sent_to}
+</p>
+<p style="margin:8px 0 0;font-size:12px;line-height:1.55;color:#5b6473;font-family:{FONT};">{reason}</p>
+"""
+
+
+def _shell(title: str, inner: str) -> str:
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -364,473 +135,165 @@ def _shell(title: str, body: str) -> str:
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <meta http-equiv="X-UA-Compatible" content="IE=edge" />
 <title>{title}</title>
-<link rel="preconnect" href="https://fonts.googleapis.com" />
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
 <style>{EMAIL_BASE_CSS}</style>
 </head>
-<body style="margin:0;padding:32px 16px;background-color:#f5f6f8;font-family:'Inter',Inter,-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#0b1220;">
-{body}
+<body style="margin:0;padding:0;background:#ffffff;color:#111111;font-family:{FONT};">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#ffffff;">
+  <tr>
+    <td align="center" style="padding:32px 20px;">
+      <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:600px;">
+        <tr>
+          <td style="font-family:{FONT};color:#111111;">
+{inner}
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+</table>
 </body>
 </html>"""
 
 
 EMAIL_TEMPLATES = {
     "email_verification": _shell(
-        "Verify Your Email — {{ project_name }}",
-        """
-<div class="email-wrapper">
-  <div class="pre-header">
-    <table class="pre-header-table" role="presentation">
-      <tr>
-        <td><span class="wordmark">{{ project_name }}</span></td>
-        <td align="right"><span class="badge badge-intel">Verification</span></td>
-      </tr>
-    </table>
-  </div>
-
-  <div class="card">
-    <div class="header">
-      <div class="header-accent"></div>
-      <h1>Confirm your <span class="accent">email</span></h1>
-      <p class="header-sub">Verify your address to activate your account.</p>
-    </div>
-    <div class="content">
-      <p class="intro-text">
-        Hello <strong>{{ user_name }}</strong>, thanks for signing up for
-        <strong>{{ project_name }}</strong>. Verify your email to unlock your account
-        and access all features.
-      </p>
-
-      <div class="cta-section">
-        <a href="{{ verification_url }}" class="cta-button">Verify email address &rarr;</a>
-      </div>
-
-      <div class="notice">
-        <div class="notice-text">
-          This link expires in <strong>24 hours</strong>. If you did not create an account,
-          you can safely ignore this email.
-        </div>
-      </div>
-
-      <p class="body-text">Best regards,<br />The {{ project_name }} Team</p>
-    </div>
-  </div>
-
-  <div class="footer">
-    <div class="footer-copy">
-      &copy; {{ current_year }} {{ company_name }}. All rights reserved.<br />
-      Sent to {{ user_email }}
-    </div>
-    <div class="footer-aside">Didn't sign up? You can safely ignore this email.</div>
-  </div>
-</div>
+        "Verify your email — {{ project_name }}",
+        f"""
+{_preheader("Confirm your email to activate your account. This link expires in 24 hours.")}
+{_brand_bar()}
+{_h1("Confirm your email")}
+{_p("Hello <strong>{{ user_name }}</strong>,")}
+{_p("Please verify <strong>{{ user_email }}</strong> to activate your {{ project_name }} account and start using the platform.")}
+{_cta("{{ verification_url }}", "Verify email address &rarr;")}
+{_critical("This link expires in 24 hours.")}
+{_muted("If you did not create an account, you can ignore this email. No account will be activated.")}
+{_fallback("{{ verification_url }}")}
+{_signoff()}
+{_footer("You received this because an account was created with this address.")}
 """,
     ),
     "password_reset": _shell(
-        "Reset Your Password — {{ project_name }}",
-        """
-<div class="email-wrapper">
-  <div class="pre-header">
-    <table class="pre-header-table" role="presentation">
-      <tr>
-        <td><span class="wordmark">{{ project_name }}</span></td>
-        <td align="right"><span class="badge badge-critical">Security</span></td>
-      </tr>
-    </table>
-  </div>
-
-  <div class="card">
-    <div class="header">
-      <div class="header-accent"></div>
-      <div class="header-eyebrow">Password reset</div>
-      <h1>Reset your <span class="accent">password</span></h1>
-      <p class="header-sub">A reset was requested for your {{ project_name }} account.</p>
-    </div>
-    <div class="content">
-      <p class="intro-text">
-        Hello <strong>{{ user_name }}</strong>, we received a request to reset the password
-        on your account. Click below to choose a new one.
-      </p>
-
-      <div class="banner banner-critical">
-        This link expires in <strong>1 hour</strong>. After that you will need to request a new reset.
-      </div>
-
-      <div class="cta-section">
-        <a href="{{ reset_url }}" class="cta-button">Reset password &rarr;</a>
-        <p class="cta-sub">Expires in 1 hour</p>
-      </div>
-
-      <div class="divider"></div>
-
-      <div class="fallback-url">
-        <div class="fallback-label">Or open this link</div>
-        <div class="fallback-link">{{ reset_url }}</div>
-      </div>
-
-      <div class="notice">
-        <div class="notice-text">
-          Didn't request this? Ignore this email — your password will not change.
-        </div>
-      </div>
-
-      <p class="body-text">Best regards,<br />The {{ project_name }} Team</p>
-    </div>
-  </div>
-
-  <div class="footer">
-    <div class="footer-copy">
-      &copy; {{ current_year }} {{ company_name }}. All rights reserved.<br />
-      Sent to {{ user_email }}
-    </div>
-    <div class="footer-aside">Didn't request a reset? Ignore this email safely.</div>
-  </div>
-</div>
+        "Reset your password — {{ project_name }}",
+        f"""
+{_preheader("Reset the password for your account. This link expires in 1 hour.")}
+{_brand_bar()}
+{_h1("Reset your password")}
+{_p("Hello <strong>{{ user_name }}</strong>,")}
+{_p("We received a request to reset the password for <strong>{{ user_email }}</strong> on {{ project_name }}.")}
+{_cta("{{ reset_url }}", "Choose a new password &rarr;")}
+{_critical("This link expires in 1 hour. After that you will need to request a new reset.")}
+{_muted("If you did not request this, ignore this email. Your password will not change.")}
+{_fallback("{{ reset_url }}")}
+{_signoff()}
+{_footer("You received this because a password reset was requested for this address.")}
 """,
     ),
     "welcome": _shell(
         "Welcome to {{ project_name }}",
-        """
-<div class="email-wrapper">
-  <div class="pre-header">
-    <table class="pre-header-table" role="presentation">
-      <tr>
-        <td><span class="wordmark">{{ project_name }}</span></td>
-        <td align="right"><span class="badge badge-strong">Welcome</span></td>
-      </tr>
-    </table>
-  </div>
-
-  <div class="card">
-    <div class="header">
-      <div class="header-accent"></div>
-      <div class="header-eyebrow">Account activated</div>
-      <h1>Welcome to <span class="accent">{{ project_name }}</span></h1>
-      <p class="header-sub">Your account is live and ready to go.</p>
-    </div>
-    <div class="content">
-      <p class="intro-text">
-        Hello <strong>{{ user_name }}</strong>, your email has been verified and your
-        account is fully active. Here is what you can do from day one.
-      </p>
-
-      <div class="banner banner-strong">
-        <strong>Account verified and active</strong>
-      </div>
-
-      <div class="section-label">What you have access to</div>
-      <div class="features-grid">
-        <div class="feature-cell">Sales session analysis</div>
-        <div class="feature-cell">Checklist scoring</div>
-        <div class="feature-cell">Performance tracking</div>
-        <div class="feature-cell">Detailed reports</div>
-      </div>
-
-      <div class="cta-section">
-        <a href="{{ dashboard_url }}" class="cta-button">Go to dashboard &rarr;</a>
-      </div>
-
-      <p class="body-text">Best regards,<br />The {{ project_name }} Team</p>
-    </div>
-  </div>
-
-  <div class="footer">
-    <div class="footer-copy">
-      &copy; {{ current_year }} {{ company_name }}. All rights reserved.<br />
-      Sent to {{ user_email }}
-    </div>
-    <div class="footer-aside">You're receiving this because you created an account.</div>
-  </div>
-</div>
+        f"""
+{_preheader("Your account is active. Here is how to get started.")}
+{_brand_bar()}
+{_h1("Your account is ready")}
+{_p("Hello <strong>{{ user_name }}</strong>,")}
+{_p("Your email is verified and your {{ project_name }} account is active. Use the dashboard to run checklists, review scores, and track deal evidence.")}
+{_cta("{{ dashboard_url }}", "Open your dashboard &rarr;")}
+{_p("<strong>Suggested first steps</strong>", margin="28px 0 0")}
+{_steps([
+    "Start a sales checklist for an active deal",
+    "Review scoring and coaching notes after the session",
+    "Invite managers and reps from organization settings",
+])}
+{_fallback("{{ dashboard_url }}")}
+{_signoff()}
+{_footer("You received this because you created an account.")}
 """,
     ),
     "registration_approved": _shell(
         "Registration approved — {{ project_name }}",
-        """
-<div class="email-wrapper">
-  <div class="pre-header">
-    <table class="pre-header-table" role="presentation">
-      <tr>
-        <td><span class="wordmark">{{ project_name }}</span></td>
-        <td align="right"><span class="badge badge-strong">Approved</span></td>
-      </tr>
-    </table>
-  </div>
-
-  <div class="card">
-    <div class="header">
-      <div class="header-accent"></div>
-      <div class="header-eyebrow">Organization approved</div>
-      <h1><span class="accent">{{ organization_name }}</span> is ready</h1>
-      <p class="header-sub">Your registration on {{ project_name }} has been approved.</p>
-    </div>
-    <div class="content">
-      <p class="intro-text">
-        Hello <strong>{{ user_name }}</strong>,
-        <strong>{{ approver_name }}</strong> has approved your organization registration.
-        Use the credentials below to sign in and set up your team.
-      </p>
-
-      <div class="details-grid">
-        <div class="detail-cell">
-          <div class="detail-label">Organization</div>
-          <div class="detail-value">{{ organization_name }}</div>
-        </div>
-        <div class="detail-cell">
-          <div class="detail-label">Your role</div>
-          <div class="detail-value"><span class="role-pill">Admin</span></div>
-        </div>
-      </div>
-
-      <div class="section-label">Your login credentials</div>
-      <table class="creds-box" role="presentation" width="100%" cellpadding="0" cellspacing="0" bgcolor="#e5f1fd" style="background-color:#e5f1fd;border:1px solid #b8d4f8;border-radius:8px;">
-        <tr>
-          <td style="padding:18px 20px;">
-            <div class="cred-row">
-              <span class="cred-key">Email</span>
-              <span class="cred-value" style="color:#0b1220;text-decoration:none;">{{ user_email }}</span>
-            </div>
-            <div class="cred-row">
-              <span class="cred-key">Temporary password</span>
-              <span class="cred-value cred-password" style="color:#0b1220;">{{ temp_password }}</span>
-            </div>
-          </td>
-        </tr>
-      </table>
-
-      <div class="notice">
-        <div class="notice-text">
-          This is a temporary password. You will be prompted to set a new password after signing in.
-        </div>
-      </div>
-
-      <div class="cta-section">
-        <a href="{{ sign_in_url }}" class="cta-button">Sign in &rarr;</a>
-      </div>
-
-      <div class="section-label">What to do next</div>
-      <table class="steps-table" role="presentation" width="100%" cellpadding="0" cellspacing="0">
-        <tr class="step-row">
-          <td class="step-num-cell" width="36" valign="middle">
-            <table role="presentation" width="28" height="28" cellpadding="0" cellspacing="0" border="0" bgcolor="#e5f1fd" style="width:28px;height:28px;background-color:#e5f1fd;border-radius:6px;">
-              <tr>
-                <td width="28" height="28" align="center" valign="middle" bgcolor="#e5f1fd" style="width:28px;height:28px;background-color:#e5f1fd;color:#0550c3;font-size:13px;font-weight:700;font-family:Arial,Helvetica,sans-serif;text-align:center;vertical-align:middle;border-radius:6px;">1</td>
-              </tr>
-            </table>
-          </td>
-          <td class="step-text" valign="middle">Sign in with your email and temporary password</td>
-        </tr>
-        <tr class="step-row">
-          <td class="step-num-cell" width="36" valign="middle">
-            <table role="presentation" width="28" height="28" cellpadding="0" cellspacing="0" border="0" bgcolor="#e5f1fd" style="width:28px;height:28px;background-color:#e5f1fd;border-radius:6px;">
-              <tr>
-                <td width="28" height="28" align="center" valign="middle" bgcolor="#e5f1fd" style="width:28px;height:28px;background-color:#e5f1fd;color:#0550c3;font-size:13px;font-weight:700;font-family:Arial,Helvetica,sans-serif;text-align:center;vertical-align:middle;border-radius:6px;">2</td>
-              </tr>
-            </table>
-          </td>
-          <td class="step-text" valign="middle">Set a new password when prompted</td>
-        </tr>
-        <tr class="step-row">
-          <td class="step-num-cell" width="36" valign="middle">
-            <table role="presentation" width="28" height="28" cellpadding="0" cellspacing="0" border="0" bgcolor="#e5f1fd" style="width:28px;height:28px;background-color:#e5f1fd;border-radius:6px;">
-              <tr>
-                <td width="28" height="28" align="center" valign="middle" bgcolor="#e5f1fd" style="width:28px;height:28px;background-color:#e5f1fd;color:#0550c3;font-size:13px;font-weight:700;font-family:Arial,Helvetica,sans-serif;text-align:center;vertical-align:middle;border-radius:6px;">3</td>
-              </tr>
-            </table>
-          </td>
-          <td class="step-text" valign="middle">Invite managers and reps from your organization settings</td>
-        </tr>
-      </table>
-
-      <p class="body-text">Best regards,<br />The {{ project_name }} Team</p>
-    </div>
-  </div>
-
-  <div class="footer">
-    <div class="footer-copy">
-      &copy; {{ current_year }} {{ company_name }}. All rights reserved.<br />
-      Sent to {{ user_email }}
-    </div>
-    <div class="footer-aside">You're receiving this because your organization registration was approved.</div>
-  </div>
-</div>
+        f"""
+{_preheader("{{ organization_name }} is approved. Sign in with the temporary password below.")}
+{_brand_bar()}
+{_h1("{{ organization_name }} is approved")}
+{_p("Hello <strong>{{ user_name }}</strong>,")}
+{_p("<strong>{{ approver_name }}</strong> approved your organization on {{ project_name }}. Sign in with the credentials below, then set a permanent password.")}
+{_kv("Organization", "{{ organization_name }}")}
+{_kv("Role", "Admin")}
+{_kv("Email", "{{ user_email }}")}
+{_kv("Temporary password", '<span style="font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;letter-spacing:0.02em;">{{ temp_password }}</span>')}
+{_critical("Do not share this password. You will be asked to set a new one after you sign in.")}
+{_cta("{{ sign_in_url }}", "Sign in &rarr;")}
+{_p("<strong>What to do next</strong>", margin="28px 0 0")}
+{_steps([
+    "Sign in with your email and temporary password",
+    "Set a new password when prompted",
+    "Invite managers and salespeople from Users",
+])}
+{_fallback("{{ sign_in_url }}")}
+{_signoff()}
+{_footer("You received this because your organization registration was approved.")}
 """,
     ),
     "invitation": _shell(
         "Invitation — {{ project_name }}",
-        """
-<div class="email-wrapper">
-  <div class="pre-header">
-    <table class="pre-header-table" role="presentation">
-      <tr>
-        <td><span class="wordmark">{{ project_name }}</span></td>
-        <td align="right"><span class="badge badge-intel">Invitation</span></td>
-      </tr>
-    </table>
-  </div>
-
-  <div class="card">
-    <div class="header">
-      <div class="header-accent"></div>
-      <h1>Join <span class="accent">{{ organization_name }}</span></h1>
-      <p class="header-sub">You've been invited to collaborate on {{ project_name }}.</p>
-    </div>
-    <div class="content">
-      <p class="intro-text">
-        <strong>{{ inviter_name }}</strong> has invited you to join
-        <strong>{{ organization_name }}</strong>.
-      </p>
-
-      <div class="details-grid">
-        <div class="detail-cell">
-          <div class="detail-label">Team</div>
-          <div class="detail-value">{{ team_name if team_name else '—' }}</div>
-        </div>
-        <div class="detail-cell">
-          <div class="detail-label">Role</div>
-          <div class="detail-value"><span class="role-pill">{{ role|capitalize }}</span></div>
-        </div>
-      </div>
-
-      {% if temp_password %}
-      <div class="section-label">Your login credentials</div>
-      <table class="creds-box" role="presentation" width="100%" cellpadding="0" cellspacing="0" bgcolor="#e5f1fd" style="background-color:#e5f1fd;border:1px solid #b8d4f8;border-radius:8px;">
-        <tr>
-          <td style="padding:18px 20px;">
-            <div class="cred-row">
-              <span class="cred-key">Email</span>
-              <span class="cred-value" style="color:#0b1220;text-decoration:none;">{{ user_email }}</span>
-            </div>
-            <div class="cred-row">
-              <span class="cred-key">Temporary password</span>
-              <span class="cred-value cred-password" style="color:#0b1220;">{{ temp_password }}</span>
-            </div>
-          </td>
-        </tr>
-      </table>
-
-      <div class="notice">
-        <div class="notice-text">
-          This is a temporary password. You will be prompted to set a new password after signing in.
-        </div>
-      </div>
-      {% endif %}
-
-      <div class="cta-section">
-        <a href="{{ invite_url }}" class="cta-button">Accept invitation &rarr;</a>
-        <p class="cta-sub">This invitation expires in 7 days</p>
-      </div>
-
-      <div class="section-label">What to do next</div>
-      <table class="steps-table" role="presentation" width="100%" cellpadding="0" cellspacing="0">
-        <tr class="step-row">
-          <td class="step-num-cell" width="36" valign="middle">
-            <table role="presentation" width="28" height="28" cellpadding="0" cellspacing="0" border="0" bgcolor="#e5f1fd" style="width:28px;height:28px;background-color:#e5f1fd;border-radius:6px;">
-              <tr>
-                <td width="28" height="28" align="center" valign="middle" bgcolor="#e5f1fd" style="width:28px;height:28px;background-color:#e5f1fd;color:#0550c3;font-size:13px;font-weight:700;font-family:Arial,Helvetica,sans-serif;text-align:center;vertical-align:middle;border-radius:6px;">1</td>
-              </tr>
-            </table>
-          </td>
-          <td class="step-text" valign="middle">Click &ldquo;Accept invitation&rdquo; above</td>
-        </tr>
-        <tr class="step-row">
-          <td class="step-num-cell" width="36" valign="middle">
-            <table role="presentation" width="28" height="28" cellpadding="0" cellspacing="0" border="0" bgcolor="#e5f1fd" style="width:28px;height:28px;background-color:#e5f1fd;border-radius:6px;">
-              <tr>
-                <td width="28" height="28" align="center" valign="middle" bgcolor="#e5f1fd" style="width:28px;height:28px;background-color:#e5f1fd;color:#0550c3;font-size:13px;font-weight:700;font-family:Arial,Helvetica,sans-serif;text-align:center;vertical-align:middle;border-radius:6px;">2</td>
-              </tr>
-            </table>
-          </td>
-          <td class="step-text" valign="middle">Sign in with your email and temporary password</td>
-        </tr>
-        <tr class="step-row">
-          <td class="step-num-cell" width="36" valign="middle">
-            <table role="presentation" width="28" height="28" cellpadding="0" cellspacing="0" border="0" bgcolor="#e5f1fd" style="width:28px;height:28px;background-color:#e5f1fd;border-radius:6px;">
-              <tr>
-                <td width="28" height="28" align="center" valign="middle" bgcolor="#e5f1fd" style="width:28px;height:28px;background-color:#e5f1fd;color:#0550c3;font-size:13px;font-weight:700;font-family:Arial,Helvetica,sans-serif;text-align:center;vertical-align:middle;border-radius:6px;">3</td>
-              </tr>
-            </table>
-          </td>
-          <td class="step-text" valign="middle">Complete the invitation acceptance flow</td>
-        </tr>
-      </table>
-    </div>
-  </div>
-
-  <div class="footer">
-    <div class="footer-copy">
-      &copy; {{ current_year }} {{ company_name }}. All rights reserved.
-    </div>
-    <div class="footer-aside">Sent to {{ user_email }}</div>
-  </div>
-</div>
+        f"""
+{_preheader("{{ inviter_name }} invited you to {{ organization_name }}. This invitation expires in 7 days.")}
+{_brand_bar()}
+{_h1("Join {{ organization_name }}")}
+{_p("<strong>{{ inviter_name }}</strong> invited you to {{ project_name }}. Accept below to access your workspace.")}
+{_kv("Organization", "{{ organization_name }}")}
+{_kv("Team", "{{ team_name if team_name else '&mdash;' }}")}
+{_kv("Role", "{{ role|capitalize }}")}
+{{% if temp_password %}}
+{_kv("Email", "{{ user_email }}")}
+{_kv("Temporary password", '<span style="font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;letter-spacing:0.02em;">{{ temp_password }}</span>')}
+{_muted("This is a temporary password. You will set a new one after you sign in.")}
+{{% endif %}}
+{_cta("{{ invite_url }}", "Accept invitation &rarr;")}
+{_critical("This invitation expires in 7 days.")}
+{_p("<strong>What to do next</strong>", margin="28px 0 0")}
+{_steps([
+    "Accept the invitation using the link above",
+    "Sign in with your email and temporary password",
+    "Complete setup and open your first checklist",
+])}
+{_fallback("{{ invite_url }}")}
+{_signoff()}
+{_footer("You received this because you were invited to an organization.")}
+""",
+    ),
+    "notification": _shell(
+        "{{ subject }} — {{ project_name }}",
+        f"""
+{_preheader("{{ subject }}")}
+{_brand_bar()}
+{_h1("{{ subject }}")}
+{_p("{{ greeting }}")}
+{_p("{{ message|safe }}")}
+{_signoff()}
+{_footer("This is a notification from {{ project_name }}.")}
 """,
     ),
     "manager_note": _shell(
         "Coaching note — {{ project_name }}",
-        """
-<div class="email-wrapper">
-  <div class="pre-header">
-    <table class="pre-header-table" role="presentation">
-      <tr>
-        <td><span class="wordmark">{{ project_name }}</span></td>
-        <td align="right"><span class="badge badge-intel">Coaching</span></td>
-      </tr>
-    </table>
-  </div>
-
-  <div class="card">
-    <div class="header">
-      <div class="header-accent"></div>
-      <div class="header-eyebrow">Manager feedback</div>
-      <h1>New coaching <span class="accent">note</span></h1>
-      <p class="header-sub">{{ manager_name }} left feedback on one of your deals.</p>
-    </div>
-    <div class="content">
-      <p class="intro-text">
-        Hello <strong>{{ rep_name }}</strong>, <strong>{{ manager_name }}</strong> added
-        {% if note_type == 'audio' %}an <strong>audio coaching note</strong>{% else %}a <strong>text coaching note</strong>{% endif %}
-        on your session for <strong>{{ customer_name }}</strong> — <strong>{{ opportunity_name }}</strong>.
-      </p>
-
-      <div class="details-grid">
-        <div class="detail-cell">
-          <div class="detail-label">Customer</div>
-          <div class="detail-value">{{ customer_name }}</div>
-        </div>
-        <div class="detail-cell">
-          <div class="detail-label">Opportunity</div>
-          <div class="detail-value">{{ opportunity_name }}</div>
-        </div>
-      </div>
-
-      {% if note_type == 'text' and note_preview %}
-      <div class="section-label">Note preview</div>
-      <div class="banner banner-warn">{{ note_preview }}</div>
-      {% elif note_type == 'audio' %}
-      <div class="banner banner-warn">
-        Open the session to listen to your manager&rsquo;s audio note.
-      </div>
-      {% endif %}
-
-      <div class="cta-section">
-        <a href="{{ session_url }}" class="cta-button">View session &rarr;</a>
-        <p class="cta-sub">Coaching notes appear on the session results page</p>
-      </div>
-
-      <p class="body-text">Best regards,<br />The {{ project_name }} Team</p>
-    </div>
-  </div>
-
-  <div class="footer">
-    <div class="footer-copy">
-      &copy; {{ current_year }} {{ company_name }}. All rights reserved.<br />
-      Sent to {{ rep_email }}
-    </div>
-    <div class="footer-aside">You received this because a manager left coaching feedback on your deal.</div>
-  </div>
-</div>
+        f"""
+{_preheader("{{ manager_name }} left coaching feedback on {{ customer_name }} — {{ opportunity_name }}.")}
+{_brand_bar()}
+{_h1("New coaching note")}
+{_p("Hello <strong>{{ rep_name }}</strong>,")}
+{_p("<strong>{{ manager_name }}</strong> left {% if note_type == 'audio' %}an audio coaching note{% else %}a coaching note{% endif %} on your session.")}
+{_kv("Customer", "{{ customer_name }}")}
+{_kv("Opportunity", "{{ opportunity_name }}")}
+{{% if note_type == 'text' and note_preview %}}
+{_p("<strong>Note</strong>", margin="8px 0 8px")}
+<p style="margin:0 0 16px;padding:0 0 0 12px;border-left:2px solid #0b2e59;font-size:15px;line-height:1.65;color:#111111;font-family:{FONT};">{{{{ note_preview }}}}</p>
+{{% elif note_type == 'audio' %}}
+{_muted("Open the session to listen to the audio note.")}
+{{% endif %}}
+{_cta("{{ session_url }}", "View session &rarr;")}
+{_muted("Coaching notes appear on the session results page.")}
+{_fallback("{{ session_url }}")}
+{_signoff()}
+{_footer("You received this because a manager left coaching feedback on your deal.", sent_to="{{ rep_email }}")}
 """,
     ),
 }
@@ -838,3 +301,122 @@ EMAIL_TEMPLATES = {
 
 def get_email_templates() -> dict[str, str]:
     return EMAIL_TEMPLATES
+
+
+COMMON_TEMPLATE_VARIABLES = ("project_name", "company_name", "current_year")
+
+EMAIL_TEMPLATE_DEFAULT_SUBJECTS: dict[str, str] = {
+    "email_verification": "Verify your email for {{ project_name }}",
+    "password_reset": "Reset your {{ project_name }} password",
+    "welcome": "Your {{ project_name }} account is ready",
+    "registration_approved": (
+        "{{ organization_name }} is approved — sign in to {{ project_name }}"
+    ),
+    "invitation": (
+        "{% if is_resend %}Reminder: {{ inviter_name }} invited you to "
+        "{{ organization_name }}{% else %}{{ inviter_name }} invited you to "
+        "{{ organization_name }}{% endif %}"
+    ),
+    "manager_note": (
+        "{% if note_type == 'audio' %}Audio coaching note: {{ customer_name }} "
+        "— {{ opportunity_name }}{% else %}Coaching note: {{ customer_name }} "
+        "— {{ opportunity_name }}{% endif %}"
+    ),
+    "notification": "{{ subject }}",
+}
+
+EMAIL_TEMPLATE_META: dict[str, dict] = {
+    "email_verification": {
+        "name": "Email verification",
+        "description": "Sent when a user needs to verify their email address.",
+        "variables": ("user_name", "user_email", "verification_url"),
+    },
+    "password_reset": {
+        "name": "Password reset",
+        "description": "Sent when a user requests a password reset.",
+        "variables": ("user_name", "user_email", "reset_url"),
+    },
+    "welcome": {
+        "name": "Welcome",
+        "description": "Sent after a user successfully activates their account.",
+        "variables": ("user_name", "user_email", "dashboard_url"),
+    },
+    "registration_approved": {
+        "name": "Registration approved",
+        "description": "Sent to the applicant when Super Admin approves an organization.",
+        "variables": (
+            "user_name",
+            "user_email",
+            "organization_name",
+            "approver_name",
+            "temp_password",
+            "sign_in_url",
+        ),
+    },
+    "invitation": {
+        "name": "Organization invitation",
+        "description": "Sent when an admin invites a user to join an organization.",
+        "variables": (
+            "user_email",
+            "organization_name",
+            "inviter_name",
+            "invite_url",
+            "role",
+            "team_name",
+            "temp_password",
+            "is_resend",
+        ),
+    },
+    "manager_note": {
+        "name": "Manager coaching note",
+        "description": "Sent to a rep when a manager leaves coaching feedback.",
+        "variables": (
+            "rep_email",
+            "rep_name",
+            "manager_name",
+            "customer_name",
+            "opportunity_name",
+            "session_url",
+            "note_type",
+            "note_preview",
+        ),
+    },
+    "notification": {
+        "name": "Generic notification",
+        "description": "Used for registration received, rejection, and admin alerts.",
+        "variables": ("subject", "greeting", "message", "user_name"),
+    },
+}
+
+TEMPLATE_SLUG_ORDER = (
+    "invitation",
+    "registration_approved",
+    "email_verification",
+    "password_reset",
+    "welcome",
+    "manager_note",
+    "notification",
+)
+
+
+def list_template_slugs() -> list[str]:
+    known = [slug for slug in TEMPLATE_SLUG_ORDER if slug in EMAIL_TEMPLATES]
+    extras = sorted(slug for slug in EMAIL_TEMPLATES if slug not in known)
+    return known + extras
+
+
+def get_template_variables(slug: str) -> list[str]:
+    extra = EMAIL_TEMPLATE_META.get(slug, {}).get("variables", ())
+    return list(COMMON_TEMPLATE_VARIABLES) + list(extra)
+
+
+def get_default_subject(slug: str) -> str:
+    if slug not in EMAIL_TEMPLATES:
+        raise KeyError(f"Unknown email template: {slug}")
+    return EMAIL_TEMPLATE_DEFAULT_SUBJECTS.get(slug, "{{ project_name }}")
+
+
+def get_default_html(slug: str) -> str:
+    if slug not in EMAIL_TEMPLATES:
+        raise KeyError(f"Unknown email template: {slug}")
+    return EMAIL_TEMPLATES[slug]

@@ -12,31 +12,17 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from typing import List, Optional, Dict, Any
 from botocore.exceptions import ClientError, BotoCoreError
-from jinja2 import Environment, BaseLoader
+from markupsafe import Markup
 from app.core.config import settings
-from app.services.email_templates import get_email_templates
+from app.services.email_template_store import get_sources_sync, render_strings
 
 logger = logging.getLogger(__name__)
-
-
-class TemplateLoader(BaseLoader):
-    """Jinja2 loader for transactional email templates."""
-
-    def __init__(self):
-        self.templates = get_email_templates()
-
-    def get_source(self, environment, template):
-        if template not in self.templates:
-            raise Exception(f"Template {template} not found")
-        source = self.templates[template]
-        return source, None, lambda: True
 
 
 class EmailService:
     """Transactional email service (SMTP for local dev, SES for stage/prod)."""
 
     def __init__(self):
-        self.env = Environment(loader=TemplateLoader())
         self.ses_client = None
         provider = settings.email_provider
         logger.info("Email provider: %s (ENVIRONMENT=%s)", provider, settings.ENVIRONMENT)
@@ -80,6 +66,11 @@ class EmailService:
             "current_year": datetime.utcnow().year,
             **extra,
         }
+
+    def _render_slug(self, slug: str, **extra: Any) -> Dict[str, str]:
+        """Render stored (or default) subject + HTML for a named template."""
+        subject_src, html_src = get_sources_sync(slug)
+        return render_strings(subject_src, html_src, self._template_context(**extra))
 
     def _send_email(
         self,
@@ -259,19 +250,17 @@ class EmailService:
             f"{resolved_base_url}/verify-email?token={verification_token}"
         )
 
-        template = self.env.get_template("email_verification")
-        html_content = template.render(
-            **self._template_context(
-                user_name=user_name,
-                user_email=user_email,
-                verification_url=verification_url,
-            )
+        rendered = self._render_slug(
+            "email_verification",
+            user_name=user_name,
+            user_email=user_email,
+            verification_url=verification_url,
         )
 
-        subject = f"Verify Your Email - {settings.PROJECT_NAME}"
-
         return self._send_email(
-            to_emails=[user_email], subject=subject, html_body=html_content
+            to_emails=[user_email],
+            subject=rendered["subject"],
+            html_body=rendered["html_body"],
         )
 
     def send_password_reset_email(
@@ -296,19 +285,17 @@ class EmailService:
         resolved_base_url = base_url or settings.FRONTEND_URL
         reset_url = f"{resolved_base_url}/reset-password?token={reset_token}"
 
-        template = self.env.get_template("password_reset")
-        html_content = template.render(
-            **self._template_context(
-                user_name=user_name,
-                user_email=user_email,
-                reset_url=reset_url,
-            )
+        rendered = self._render_slug(
+            "password_reset",
+            user_name=user_name,
+            user_email=user_email,
+            reset_url=reset_url,
         )
 
-        subject = f"Reset Your Password - {settings.PROJECT_NAME}"
-
         return self._send_email(
-            to_emails=[user_email], subject=subject, html_body=html_content
+            to_emails=[user_email],
+            subject=rendered["subject"],
+            html_body=rendered["html_body"],
         )
 
     def send_welcome_email(
@@ -330,19 +317,17 @@ class EmailService:
         """
         resolved_dashboard_url = dashboard_url or f"{settings.FRONTEND_URL}/dashboard"
 
-        template = self.env.get_template("welcome")
-        html_content = template.render(
-            **self._template_context(
-                user_name=user_name,
-                user_email=user_email,
-                dashboard_url=resolved_dashboard_url,
-            )
+        rendered = self._render_slug(
+            "welcome",
+            user_name=user_name,
+            user_email=user_email,
+            dashboard_url=resolved_dashboard_url,
         )
 
-        subject = f"Welcome to {settings.PROJECT_NAME}!"
-
         return self._send_email(
-            to_emails=[user_email], subject=subject, html_body=html_content
+            to_emails=[user_email],
+            subject=rendered["subject"],
+            html_body=rendered["html_body"],
         )
 
     def send_notification_email(
@@ -366,55 +351,19 @@ class EmailService:
         """
         greeting = f"Hello {user_name}," if user_name else "Hello,"
 
-        year = datetime.utcnow().year
-        html_content = f"""
-        <!DOCTYPE html>
-        <html lang="en">
-        <head>
-            <meta charset="UTF-8" />
-            <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-            <style>
-                body {{
-                    font-family: Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-                    background: #f5f6f8; color: #0b1220; margin: 0; padding: 32px 16px; line-height: 1.6;
-                }}
-                .wrap {{ max-width: 600px; margin: 0 auto; }}
-                .card {{
-                    background: #fff; border: 1px solid #d7dce3; border-radius: 8px; overflow: hidden;
-                    box-shadow: 0 1px 2px rgba(11, 46, 89, 0.06);
-                }}
-                .header {{
-                    background: linear-gradient(135deg, #001a41 0%, #0b2e59 100%);
-                    color: #fff; padding: 28px 32px;
-                }}
-                .header h1 {{ margin: 0; font-size: 22px; font-weight: 700; }}
-                .content {{ padding: 28px 32px; color: #5b6473; font-size: 15px; }}
-                .content p {{ margin: 0 0 16px; }}
-                .footer {{
-                    padding: 16px 4px 0; font-size: 12px; color: #5b6473; border-top: 1px solid #d7dce3; margin-top: 16px;
-                }}
-            </style>
-        </head>
-        <body>
-            <div class="wrap">
-                <div class="card">
-                    <div class="header"><h1>{settings.PROJECT_NAME}</h1></div>
-                    <div class="content">
-                        <p>{greeting}</p>
-                        <p>{message}</p>
-                        <p>Best regards,<br />The {settings.PROJECT_NAME} Team</p>
-                    </div>
-                </div>
-                <div class="footer">
-                    <p>&copy; {year} {settings.EMAIL_COMPANY_NAME}. All rights reserved.</p>
-                </div>
-            </div>
-        </body>
-        </html>
-        """
+        rendered = self._render_slug(
+            "notification",
+            subject=subject,
+            greeting=greeting,
+            message=Markup(message) if message else "",
+            user_name=user_name or "",
+            user_email=to_emails[0] if to_emails else "",
+        )
 
         return self._send_email(
-            to_emails=to_emails, subject=subject, html_body=html_content
+            to_emails=to_emails,
+            subject=rendered["subject"],
+            html_body=rendered["html_body"],
         )
 
     def verify_email_address(self, email: str) -> bool:
@@ -450,20 +399,14 @@ class EmailService:
         sign_in_url: str,
     ) -> Dict[str, Any]:
         """Build org registration approval email with credentials (no network I/O)."""
-        template = self.env.get_template("registration_approved")
-        html_content = template.render(
-            **self._template_context(
-                user_email=to_email,
-                user_name=user_name,
-                organization_name=organization_name,
-                approver_name=approver_name,
-                temp_password=temp_password,
-                sign_in_url=sign_in_url,
-            )
-        )
-
-        subject = (
-            f"Your organization registration was approved — {settings.PROJECT_NAME}"
+        rendered = self._render_slug(
+            "registration_approved",
+            user_email=to_email,
+            user_name=user_name,
+            organization_name=organization_name,
+            approver_name=approver_name,
+            temp_password=temp_password,
+            sign_in_url=sign_in_url,
         )
         text_body = (
             f"{approver_name} approved your registration for {organization_name} "
@@ -476,8 +419,8 @@ class EmailService:
 
         return {
             "to_email": to_email,
-            "subject": subject,
-            "html_body": html_content,
+            "subject": rendered["subject"],
+            "html_body": rendered["html_body"],
             "text_body": text_body,
         }
 
@@ -503,23 +446,16 @@ class EmailService:
         is_resend: bool = False,
     ) -> Dict[str, Any]:
         """Build invitation email content (no network I/O)."""
-        template = self.env.get_template("invitation")
-        html_content = template.render(
-            **self._template_context(
-                user_email=to_email,
-                organization_name=organization_name,
-                inviter_name=inviter_name,
-                invite_url=invite_url,
-                role=role,
-                team_name=team_name or "No team assigned",
-                temp_password=temp_password,
-            )
-        )
-
-        subject = (
-            f"Reminder: invitation to join {organization_name} on {settings.PROJECT_NAME}"
-            if is_resend
-            else f"You're invited to join {organization_name} on {settings.PROJECT_NAME}"
+        rendered = self._render_slug(
+            "invitation",
+            user_email=to_email,
+            organization_name=organization_name,
+            inviter_name=inviter_name,
+            invite_url=invite_url,
+            role=role,
+            team_name=team_name or "No team assigned",
+            temp_password=temp_password,
+            is_resend=is_resend,
         )
 
         team_line = team_name or "No team assigned"
@@ -539,8 +475,8 @@ class EmailService:
 
         return {
             "to_email": to_email,
-            "subject": subject,
-            "html_body": html_content,
+            "subject": rendered["subject"],
+            "html_body": rendered["html_body"],
             "text_body": text_body,
         }
 
@@ -603,29 +539,25 @@ class EmailService:
         note_preview: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Build manager-note notification email content (no network I/O)."""
-        template = self.env.get_template("manager_note")
-        html_content = template.render(
-            **self._template_context(
-                rep_email=rep_email,
-                rep_name=rep_name,
-                manager_name=manager_name,
-                customer_name=customer_name,
-                opportunity_name=opportunity_name,
-                session_url=session_url,
-                note_type=note_type,
-                note_preview=note_preview,
-            )
+        rendered = self._render_slug(
+            "manager_note",
+            rep_email=rep_email,
+            rep_name=rep_name,
+            manager_name=manager_name,
+            customer_name=customer_name,
+            opportunity_name=opportunity_name,
+            session_url=session_url,
+            note_type=note_type,
+            note_preview=note_preview,
         )
 
         deal_label = f"{customer_name} — {opportunity_name}"
         if note_type == "audio":
-            subject = f"New audio coaching note on {deal_label}"
             text_body = (
                 f"{manager_name} left an audio coaching note on your session for {deal_label}.\n\n"
                 f"View session: {session_url}\n"
             )
         else:
-            subject = f"New coaching note on {deal_label}"
             preview_line = f"\n\nNote preview:\n{note_preview}\n" if note_preview else "\n"
             text_body = (
                 f"{manager_name} left a coaching note on your session for {deal_label}."
@@ -635,8 +567,8 @@ class EmailService:
 
         return {
             "to_email": rep_email,
-            "subject": subject,
-            "html_body": html_content,
+            "subject": rendered["subject"],
+            "html_body": rendered["html_body"],
             "text_body": text_body,
         }
 
