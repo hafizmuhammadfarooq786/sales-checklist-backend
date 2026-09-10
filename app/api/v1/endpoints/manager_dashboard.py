@@ -16,7 +16,7 @@ from app.models.scoring import ScoringResult
 from app.models.user import User, UserRole
 from app.models.checklist import ChecklistItem, ChecklistCategory
 from app.models.session_knowledge_insight import SessionKnowledgeInsight
-from app.api.dependencies import get_current_user
+from app.api.dependencies import get_current_user, manager_visible_users_filter
 from app.core.dashboard_date import get_dashboard_date_range
 from app.services.risk_band_service import (
     AT_RISK_MAX_SCORE,
@@ -168,11 +168,10 @@ async def get_team_members(user: User, db: AsyncSession) -> List[int]:
         return [row[0] for row in result.all()]
 
     elif user.role == UserRole.MANAGER:
-        # Manager sees managers and reps on their team (not org admin)
+        # Team when assigned; otherwise all managers and reps in the organization
         result = await db.execute(
             select(User.id).where(
-                User.team_id == user.team_id,
-                User.deleted_at.is_(None),
+                manager_visible_users_filter(user),
                 User.role.in_([UserRole.MANAGER, UserRole.REP]),
                 exclude_users_with_pending_invitations(user.organization_id, User.email),
             )

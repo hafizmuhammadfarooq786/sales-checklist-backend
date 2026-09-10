@@ -175,13 +175,55 @@ def require_roles(*roles: UserRole):
     return check_user_role
 
 
+def manager_visible_users_filter(current_user: User):
+    """
+    Users whose sessions a manager can see.
+
+    Team is optional on invitations (UI default is "No team"). Managers with no
+    team must still coach the org, so they see all non-deleted users in their
+    organization. Managers assigned to a team see that team plus unassigned
+    teammates in the same organization.
+    """
+    from sqlalchemy import and_, or_
+
+    if not current_user.organization_id:
+        return User.id == current_user.id
+
+    conditions = [
+        User.organization_id == current_user.organization_id,
+        User.deleted_at.is_(None),
+    ]
+    if current_user.team_id:
+        conditions.append(
+            or_(
+                User.team_id == current_user.team_id,
+                User.team_id.is_(None),
+            )
+        )
+    return and_(*conditions)
+
+
+def manager_can_view_owned_session(manager: User, owner: Optional[User]) -> bool:
+    """Python-side check matching manager_visible_users_filter."""
+    if owner is None or owner.deleted_at is not None:
+        return False
+    if not manager.organization_id:
+        return owner.id == manager.id
+    if owner.organization_id != manager.organization_id:
+        return False
+    if manager.team_id:
+        return owner.team_id == manager.team_id or owner.team_id is None
+    return True
+
+
 def get_session_access_filter(current_user: User):
     """
     Build SQLAlchemy filter conditions based on user role for session access.
 
     Role-Based Access Logic:
     - ADMIN: Can access ALL sessions in their organization (from non-deleted users)
-    - MANAGER: Can access sessions from users in their team (from non-deleted users)
+    - MANAGER: Can access sessions from their team, or the whole organization
+      when they are not assigned to a team (from non-deleted users)
     - REP: Can only access their own sessions
 
     Returns:
@@ -208,18 +250,7 @@ def get_session_access_filter(current_user: User):
             return Session.user_id == current_user.id
 
     elif current_user.role == UserRole.MANAGER:
-        # Manager sees team sessions (excluding deleted users)
-        if current_user.team_id:
-            # Filter by team - get all users in team, then their sessions
-            return Session.user.has(
-                and_(
-                    User.team_id == current_user.team_id,
-                    User.deleted_at.is_(None)
-                )
-            )
-        else:
-            # No team assigned - only see own sessions
-            return Session.user_id == current_user.id
+        return Session.user.has(manager_visible_users_filter(current_user))
 
     else:  # REP or any other role
         # Rep sees only own sessions
