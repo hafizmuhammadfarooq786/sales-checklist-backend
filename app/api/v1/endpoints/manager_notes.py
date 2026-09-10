@@ -21,7 +21,7 @@ from app.schemas.manager_note import (
     ManagerNoteResponse,
     ManagerNoteListResponse
 )
-from app.api.dependencies import get_current_user
+from app.api.dependencies import get_current_user, manager_can_view_owned_session
 from app.services.email_dispatch import dispatch_manager_note_email
 
 router = APIRouter()
@@ -70,7 +70,7 @@ def can_view_session(user: User, session: Session) -> bool:
 
     RBAC Rules:
     - REP: Can only view own sessions
-    - MANAGER: Can view sessions from their team
+    - MANAGER: Can view team sessions, or all org sessions when not on a team
     - ADMIN: Can view all sessions in their organization
     - SYSTEM_ADMIN: Can view all sessions
     """
@@ -81,7 +81,7 @@ def can_view_session(user: User, session: Session) -> bool:
         return session.user.organization_id == user.organization_id
 
     if user.role == UserRole.MANAGER:
-        return session.user.team_id == user.team_id
+        return manager_can_view_owned_session(user, session.user)
 
     if user.role == UserRole.REP:
         return session.user_id == user.id
