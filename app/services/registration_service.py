@@ -18,7 +18,6 @@ from app.models.organization_registration import (
 )
 from app.models.user import UserRole
 from app.schemas.organization_registration import OrganizationRegistrationCreate
-from app.services.auth_service import auth_service
 from app.services.email_dispatch import (
     dispatch_notification_email,
     dispatch_registration_approved_email,
@@ -129,10 +128,8 @@ class OrganizationRegistrationService:
         reviewer_name = f"{reviewer.first_name or ''} {reviewer.last_name or ''}".strip() or reviewer.email
         admin_name = f"{request.admin_first_name} {request.admin_last_name}".strip()
 
-        temp_password = invitation_service.generate_temp_password()
         admin_user = User(
             email=admin_email,
-            password_hash=auth_service.hash_password(temp_password),
             first_name=request.admin_first_name.strip(),
             last_name=request.admin_last_name.strip(),
             job_title=getattr(request, "admin_job_title", None) or "Executive Sponsor",
@@ -141,7 +138,6 @@ class OrganizationRegistrationService:
             organization_id=organization.id,
             role=UserRole.ADMIN,
             is_active=True,
-            must_change_password=True,
         )
         db.add(admin_user)
         await db.flush()
@@ -151,7 +147,6 @@ class OrganizationRegistrationService:
             user_name=admin_name or admin_email,
             organization_name=request.company_name,
             approver_name=reviewer_name,
-            temp_password=temp_password,
             sign_in_url=f"{base_url}/sign-in",
         )
         if not email_sent:

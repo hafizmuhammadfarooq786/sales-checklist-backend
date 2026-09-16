@@ -93,6 +93,14 @@ def _fallback(href: str) -> str:
 """
 
 
+def _otp_code(code_var: str = "{{ otp_code }}") -> str:
+    return f"""
+<p style="margin:24px 0 8px;font-family:{FONT};">
+  <span style="display:inline-block;letter-spacing:0.28em;font-size:32px;line-height:1.2;font-weight:700;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:#0b2e59;">{code_var}</span>
+</p>
+"""
+
+
 def _kv(label: str, value: str) -> str:
     return f"""
 <p style="margin:0 0 16px;font-family:{FONT};">
@@ -172,20 +180,19 @@ EMAIL_TEMPLATES = {
 {_footer("You received this because an account was created with this address.")}
 """,
     ),
-    "password_reset": _shell(
-        "Reset your password — {{ project_name }}",
+    "login_otp": _shell(
+        "Your sign-in code — {{ project_name }}",
         f"""
-{_preheader("Reset the password for your account. This link expires in 1 hour.")}
+{_preheader("Your verification code is {{ otp_code }}. It is valid for 24 hours.")}
 {_brand_bar()}
-{_h1("Reset your password")}
+{_h1("Your sign-in code")}
 {_p("Hello <strong>{{ user_name }}</strong>,")}
-{_p("We received a request to reset the password for <strong>{{ user_email }}</strong> on {{ project_name }}.")}
-{_cta("{{ reset_url }}", "Choose a new password &rarr;")}
-{_critical("This link expires in 1 hour. After that you will need to request a new reset.")}
-{_muted("If you did not request this, ignore this email. Your password will not change.")}
-{_fallback("{{ reset_url }}")}
+{_p("Use this code to sign in to {{ project_name }} as <strong>{{ user_email }}</strong>.")}
+{_otp_code()}
+{_critical("This code is valid for 24 hours.")}
+{_muted("Requesting a new code immediately invalidates this one. If you did not request a code, you can ignore this email.")}
 {_signoff()}
-{_footer("You received this because a password reset was requested for this address.")}
+{_footer("You received this because a sign-in code was requested for this address.")}
 """,
     ),
     "welcome": _shell(
@@ -211,21 +218,19 @@ EMAIL_TEMPLATES = {
     "registration_approved": _shell(
         "Registration approved — {{ project_name }}",
         f"""
-{_preheader("{{ organization_name }} is approved. Sign in with the temporary password below.")}
+{_preheader("{{ organization_name }} is approved. Sign in with a verification code sent to your email.")}
 {_brand_bar()}
 {_h1("{{ organization_name }} is approved")}
 {_p("Hello <strong>{{ user_name }}</strong>,")}
-{_p("<strong>{{ approver_name }}</strong> approved your organization on {{ project_name }}. Sign in with the credentials below, then set a permanent password.")}
+{_p("<strong>{{ approver_name }}</strong> approved your organization on {{ project_name }}. Sign in with your email and a verification code — no password is required.")}
 {_kv("Organization", "{{ organization_name }}")}
 {_kv("Role", "Admin")}
 {_kv("Email", "{{ user_email }}")}
-{_kv("Temporary password", '<span style="font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;letter-spacing:0.02em;">{{ temp_password }}</span>')}
-{_critical("Do not share this password. You will be asked to set a new one after you sign in.")}
 {_cta("{{ sign_in_url }}", "Sign in &rarr;")}
 {_p("<strong>What to do next</strong>", margin="28px 0 0")}
 {_steps([
-    "Sign in with your email and temporary password",
-    "Set a new password when prompted",
+    "Open the sign-in page and enter your email",
+    "Enter the verification code we send you",
     "Invite managers and salespeople from Users",
 ])}
 {_fallback("{{ sign_in_url }}")}
@@ -243,17 +248,13 @@ EMAIL_TEMPLATES = {
 {_kv("Organization", "{{ organization_name }}")}
 {_kv("Team", "{{ team_name if team_name else '&mdash;' }}")}
 {_kv("Role", "{{ role|capitalize }}")}
-{{% if temp_password %}}
 {_kv("Email", "{{ user_email }}")}
-{_kv("Temporary password", '<span style="font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;letter-spacing:0.02em;">{{ temp_password }}</span>')}
-{_muted("This is a temporary password. You will set a new one after you sign in.")}
-{{% endif %}}
 {_cta("{{ invite_url }}", "Accept invitation &rarr;")}
 {_critical("This invitation expires in 7 days.")}
 {_p("<strong>What to do next</strong>", margin="28px 0 0")}
 {_steps([
     "Accept the invitation using the link above",
-    "Sign in with your email and temporary password",
+    "Sign in with the verification code sent to your email",
     "Complete setup and open your first checklist",
 ])}
 {_fallback("{{ invite_url }}")}
@@ -307,7 +308,7 @@ COMMON_TEMPLATE_VARIABLES = ("project_name", "company_name", "current_year")
 
 EMAIL_TEMPLATE_DEFAULT_SUBJECTS: dict[str, str] = {
     "email_verification": "Verify your email for {{ project_name }}",
-    "password_reset": "Reset your {{ project_name }} password",
+    "login_otp": "Your {{ project_name }} sign-in code",
     "welcome": "Your {{ project_name }} account is ready",
     "registration_approved": (
         "{{ organization_name }} is approved — sign in to {{ project_name }}"
@@ -331,10 +332,10 @@ EMAIL_TEMPLATE_META: dict[str, dict] = {
         "description": "Sent when a user needs to verify their email address.",
         "variables": ("user_name", "user_email", "verification_url"),
     },
-    "password_reset": {
-        "name": "Password reset",
-        "description": "Sent when a user requests a password reset.",
-        "variables": ("user_name", "user_email", "reset_url"),
+    "login_otp": {
+        "name": "Login verification code",
+        "description": "Sent when a user requests a sign-in OTP. Valid for 24 hours.",
+        "variables": ("user_name", "user_email", "otp_code"),
     },
     "welcome": {
         "name": "Welcome",
@@ -349,7 +350,6 @@ EMAIL_TEMPLATE_META: dict[str, dict] = {
             "user_email",
             "organization_name",
             "approver_name",
-            "temp_password",
             "sign_in_url",
         ),
     },
@@ -363,7 +363,6 @@ EMAIL_TEMPLATE_META: dict[str, dict] = {
             "invite_url",
             "role",
             "team_name",
-            "temp_password",
             "is_resend",
         ),
     },
@@ -391,8 +390,8 @@ EMAIL_TEMPLATE_META: dict[str, dict] = {
 TEMPLATE_SLUG_ORDER = (
     "invitation",
     "registration_approved",
+    "login_otp",
     "email_verification",
-    "password_reset",
     "welcome",
     "manager_note",
     "notification",

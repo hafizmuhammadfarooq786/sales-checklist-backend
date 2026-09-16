@@ -774,7 +774,7 @@ async def resend_invitation(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_roles(UserRole.ADMIN)),
 ):
-    """Resend a pending invitation with a new link and temporary password (ADMIN only)."""
+    """Resend a pending invitation with a new link (ADMIN only)."""
     if not current_user.organization_id:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

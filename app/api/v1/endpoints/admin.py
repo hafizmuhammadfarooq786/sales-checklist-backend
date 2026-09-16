@@ -48,7 +48,6 @@ from app.schemas.organization_registration import (
 from app.schemas.user import UserResponse, UserUpdate, AdminUserProvision
 from app.api.dependencies import require_roles
 from app.services.admin_insights_service import get_admin_insights_service
-from app.services.auth_service import auth_service
 from app.services.auth_session_service import auth_session_service
 from app.services.activity_emitter import activity_emitter
 from app.services import activity_event_types as evt
@@ -732,7 +731,6 @@ async def provision_user(
 
     user = User(
         email=user_data.email,
-        password_hash=auth_service.hash_password(user_data.password),
         first_name=user_data.first_name,
         last_name=user_data.last_name,
         role=user_data.role,
@@ -740,7 +738,6 @@ async def provision_user(
         team_id=user_data.team_id,
         is_active=user_data.is_active,
         is_verified=user_data.is_verified,
-        must_change_password=user_data.must_change_password,
     )
     db.add(user)
     await db.commit()

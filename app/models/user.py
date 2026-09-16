@@ -53,7 +53,6 @@ class User(Base, TimestampMixin):
 
     id = Column(Integer, primary_key=True, index=True)
     email = Column(String(255), unique=True, nullable=False, index=True)
-    password_hash = Column(String(255), nullable=False)
     first_name = Column(String(100), nullable=True)
     last_name = Column(String(100), nullable=True)
     job_title = Column(String(150), nullable=True)
@@ -72,10 +71,6 @@ class User(Base, TimestampMixin):
     failed_login_attempts = Column(Integer, default=0, nullable=False)
     locked_until = Column(DateTime, nullable=True)
 
-    # Password reset
-    password_reset_token = Column(String(255), nullable=True)
-    password_reset_expires = Column(DateTime, nullable=True)
-
     # Email verification
     email_verification_token = Column(String(255), nullable=True)
     email_verification_expires = Column(DateTime, nullable=True)
@@ -83,9 +78,6 @@ class User(Base, TimestampMixin):
     # Soft delete
     deleted_at = Column(DateTime, nullable=True, index=True)
     deleted_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
-
-    # Password management
-    must_change_password = Column(Boolean, default=False, nullable=False)
 
     # Relationships
     organization = relationship("Organization", back_populates="users")

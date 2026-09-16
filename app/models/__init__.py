@@ -34,6 +34,7 @@ from app.models.organization_knowledge import (
     OrganizationKnowledgeChunk,
 )
 from app.models.auth_session import AuthSession
+from app.models.login_otp import LoginOtp
 from app.models.activity_event import ActivityEvent
 from app.models.email_template import EmailTemplate
 
@@ -75,6 +76,7 @@ __all__ = [
     "OrganizationKnowledgeDocument",
     "OrganizationKnowledgeChunk",
     "AuthSession",
+    "LoginOtp",
     "ActivityEvent",
     "EmailTemplate",
 ]

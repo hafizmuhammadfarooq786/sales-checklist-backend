@@ -1,5 +1,5 @@
 """
-Authentication service for JWT token generation and password management
+Authentication service for JWT token generation
 """
 
 import logging
@@ -7,10 +7,8 @@ import secrets
 from datetime import datetime, timedelta
 from typing import Optional
 from jose import jwt, JWTError
-from passlib.context import CryptContext
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_
-from sqlalchemy.orm import selectinload
 from app.services.email_dispatch import dispatch_verification_email
 from fastapi import HTTPException, status
 from app.core.config import settings
@@ -21,21 +19,12 @@ logger = logging.getLogger(__name__)
 
 
 class AuthService:
-    """Authentication service for JWT and password management"""
+    """Authentication service for JWT management"""
 
     def __init__(self):
-        self.pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
         self.algorithm = settings.ALGORITHM
         self.secret_key = settings.SECRET_KEY
         self.access_token_expire_minutes = settings.ACCESS_TOKEN_EXPIRE_MINUTES
-
-    def hash_password(self, password: str) -> str:
-        """Hash a password using bcrypt"""
-        return self.pwd_context.hash(password)
-
-    def verify_password(self, plain_password: str, hashed_password: str) -> bool:
-        """Verify a password against its hash"""
-        return self.pwd_context.verify(plain_password, hashed_password)
 
     def create_access_token(
         self, data: dict, expires_delta: Optional[timedelta] = None, jti: Optional[str] = None
@@ -64,70 +53,14 @@ class AuthService:
         except JWTError:
             return None
 
-    def generate_reset_token(self) -> str:
-        """Generate a secure password reset token"""
-        return secrets.token_urlsafe(32)
-
     def generate_verification_token(self) -> str:
         """Generate a secure email verification token"""
         return secrets.token_urlsafe(32)
 
-    async def authenticate_user(
-        self, db: AsyncSession, email: str, password: str
-    ) -> Optional[User]:
-        """
-        Authenticate a user with email and password.
-
-        Performance optimization: Uses eager loading to prevent N+1 queries
-        when building the token response with user data.
-        """
-        result = await db.execute(
-            select(User)
-            .options(selectinload(User.organization), selectinload(User.team))
-            .where(
-                and_(
-                    User.email == email,
-                    User.is_active.is_(True),
-                    User.deleted_at.is_(None),  # Exclude soft-deleted users
-                )
-            )
-        )
-        user = result.scalar_one_or_none()
-
-        if not user:
-            return None
-
-        # Check if account is locked
-        if user.locked_until and user.locked_until > datetime.utcnow():
-            return None
-
-        # Verify password (intentionally slow - bcrypt security feature)
-        if not self.verify_password(password, user.password_hash):
-            # Increment failed attempts
-            user.failed_login_attempts = (user.failed_login_attempts or 0) + 1
-
-            # Lock account after 5 failed attempts for 30 minutes
-            if user.failed_login_attempts >= 5:
-                user.locked_until = datetime.utcnow() + timedelta(minutes=30)
-
-            await db.commit()
-            return None
-
-        # Reset failed attempts on successful login
-        user.failed_login_attempts = 0
-        user.locked_until = None
-        user.last_login = datetime.utcnow()
-        await db.commit()
-
-        return user
-
     async def create_user(self, db: AsyncSession, user_data: UserCreate) -> User:
-        """Create a new user with hashed password"""
-        hashed_password = self.hash_password(user_data.password)
-
+        """Create a new user. Sign-in uses email OTP, not a password."""
         user = User(
             email=user_data.email,
-            password_hash=hashed_password,
             first_name=user_data.first_name,
             last_name=user_data.last_name,
             role=user_data.role,
@@ -175,12 +108,7 @@ class AuthService:
         remember_me: bool = False,
         jti: Optional[str] = None,
     ) -> Token:
-        """
-        Create a complete token response with user data.
-
-        All user fields are already loaded via eager loading in authenticate_user,
-        so this method doesn't trigger additional database queries.
-        """
+        """Create a complete token response with user data."""
         if remember_me:
             expires_delta = timedelta(days=settings.REMEMBER_ME_TOKEN_EXPIRE_DAYS)
         else:
@@ -202,7 +130,6 @@ class AuthService:
             team_id=user.team_id,
             is_active=user.is_active,
             is_verified=user.is_verified,
-            must_change_password=user.must_change_password,
             last_login=user.last_login,
             created_at=user.created_at,
             updated_at=user.updated_at,
@@ -255,64 +182,6 @@ class AuthService:
         await db.commit()
         await db.refresh(user)
         return user
-
-    async def request_password_reset(
-        self, db: AsyncSession, email: str
-    ) -> Optional[User]:
-        """Request password reset for user"""
-        result = await db.execute(select(User).where(User.email == email))
-        user = result.scalar_one_or_none()
-
-        if not user:
-            return None
-
-        user.password_reset_token = self.generate_reset_token()
-        user.password_reset_expires = datetime.utcnow() + timedelta(hours=1)
-        await db.commit()
-        return user
-
-    async def reset_password(
-        self, db: AsyncSession, token: str, new_password: str
-    ) -> bool:
-        """Reset password with token"""
-        result = await db.execute(
-            select(User).where(
-                and_(
-                    User.password_reset_token == token,
-                    User.password_reset_expires > datetime.utcnow(),
-                )
-            )
-        )
-        user = result.scalar_one_or_none()
-
-        if not user:
-            return False
-
-        user.password_hash = self.hash_password(new_password)
-        user.password_reset_token = None
-        user.password_reset_expires = None
-        user.failed_login_attempts = 0  # Reset failed attempts
-        user.locked_until = None  # Unlock account
-        await db.commit()
-        return True
-
-    async def change_password(
-        self, db: AsyncSession, user: User, current_password: str, new_password: str
-    ) -> bool:
-        """
-        Change password for authenticated user
-        Requires current password verification for security
-        """
-        # Verify current password
-        if not self.verify_password(current_password, user.password_hash):
-            return False
-
-        # Hash and update to new password
-        user.password_hash = self.hash_password(new_password)
-        user.failed_login_attempts = 0  # Reset any failed attempts
-        user.locked_until = None  # Unlock account if locked
-        await db.commit()
-        return True
 
 
 # Global auth service instance

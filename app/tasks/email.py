@@ -25,15 +25,15 @@ def send_verification_email_task(self, payload: Dict[str, Any]) -> bool:
         raise self.retry(exc=exc)
 
 
-@celery_app.task(name="email.send_password_reset", bind=True, max_retries=3, default_retry_delay=60)
-def send_password_reset_email_task(self, payload: Dict[str, Any]) -> bool:
+@celery_app.task(name="email.send_login_otp", bind=True, max_retries=3, default_retry_delay=60)
+def send_login_otp_email_task(self, payload: Dict[str, Any]) -> bool:
     try:
-        ok = get_email_service().send_password_reset_email(**payload)
+        ok = get_email_service().send_login_otp_email(**payload)
         if not ok:
-            raise RuntimeError(f"Password reset email not sent to {payload.get('user_email')}")
+            raise RuntimeError(f"Login OTP email not sent to {payload.get('user_email')}")
         return ok
     except Exception as exc:
-        logger.exception("Password reset email task failed")
+        logger.exception("Login OTP email task failed")
         raise self.retry(exc=exc)
 
 
