@@ -19,7 +19,6 @@ class UserBase(BaseModel):
 
 class UserCreate(UserBase):
     """Schema for creating a user via registration"""
-    password: str = Field(min_length=8, description="Password must be at least 8 characters")
     role: UserRole = UserRole.REP
 
 
@@ -46,13 +45,11 @@ class UserSelfUpdate(BaseModel):
 
 class AdminUserProvision(UserBase):
     """Schema for SYSTEM_ADMIN-provisioned users"""
-    password: str = Field(min_length=8, description="Password must be at least 8 characters")
     organization_id: int
     team_id: Optional[int] = None
     role: UserRole = UserRole.REP
     is_active: bool = True
     is_verified: bool = True
-    must_change_password: bool = True
 
 
 class UserResponse(UserBase):
@@ -63,7 +60,6 @@ class UserResponse(UserBase):
     team_id: Optional[int] = None
     is_active: bool
     is_verified: bool
-    must_change_password: bool = False
     last_login: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
@@ -98,11 +94,21 @@ class OrganizationResponse(BaseModel):
         from_attributes = True
 
 
-class UserLogin(BaseModel):
-    """Schema for user login"""
+class OtpRequest(BaseModel):
+    """Request an email OTP for passwordless sign-in."""
     email: EmailStr
-    password: str
-    remember_me: bool = False
+
+
+class EmailRequest(BaseModel):
+    """Email-only payload for resend-verification and similar public flows."""
+    email: EmailStr
+
+
+class OtpVerify(BaseModel):
+    """Verify an email OTP and issue a JWT session."""
+    email: EmailStr
+    code: str = Field(min_length=6, max_length=8, description="6-digit email verification code")
+    remember_me: bool = True
 
 
 class Token(BaseModel):
@@ -113,26 +119,9 @@ class Token(BaseModel):
     user: UserResponse
 
 
-class PasswordReset(BaseModel):
-    """Schema for password reset request"""
-    email: EmailStr
-
-
-class PasswordResetConfirm(BaseModel):
-    """Schema for password reset confirmation"""
-    token: str
-    new_password: str = Field(min_length=8, description="Password must be at least 8 characters")
-
-
 class EmailVerification(BaseModel):
     """Schema for email verification"""
     token: str
-
-
-class PasswordChange(BaseModel):
-    """Schema for changing password (authenticated users)"""
-    current_password: str
-    new_password: str = Field(min_length=8, description="New password must be at least 8 characters")
 
 
 class PipelineMetrics(BaseModel):

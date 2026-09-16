@@ -31,12 +31,9 @@ class Settings(BaseSettings):
     ALLOW_PUBLIC_SIGNUP: bool = Field(default=False)
     INTERNAL_ADMIN_API_KEY: str = Field(default="")
     
-    # Password validation
-    MIN_PASSWORD_LENGTH: int = 8
-    REQUIRE_PASSWORD_UPPERCASE: bool = True
-    REQUIRE_PASSWORD_LOWERCASE: bool = True
-    REQUIRE_PASSWORD_NUMBERS: bool = True
-    REQUIRE_PASSWORD_SPECIAL: bool = False
+    # Login OTP
+    OTP_EXPIRE_HOURS: int = 24
+    OTP_MAX_REQUESTS_PER_HOUR: int = 10
 
     # Database
     DATABASE_URL: str = Field(

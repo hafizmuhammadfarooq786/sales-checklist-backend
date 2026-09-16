@@ -8,16 +8,16 @@ import logging
 from app.db.session import get_db
 from app.models.user import User
 from app.schemas.user import (
-    UserCreate, UserLogin, Token, PasswordReset,
-    PasswordResetConfirm, EmailVerification, UserResponse,
-    PasswordChange
+    UserCreate, Token, EmailVerification, UserResponse,
+    EmailRequest, OtpRequest, OtpVerify,
 )
 from app.services.auth_service import auth_service
 from app.services.auth_session_service import auth_session_service
+from app.services.otp_service import otp_service, GENERIC_OTP_MESSAGE
 from app.services.activity_emitter import activity_emitter
 from app.services import activity_event_types as evt
 from app.services.email_dispatch import (
-    dispatch_password_reset_email,
+    dispatch_login_otp_email,
     dispatch_verification_email,
     dispatch_welcome_email,
 )
@@ -91,41 +91,17 @@ async def register(
             detail="Failed to create user account"
         )
 
-# Authenticate user and return JWT token
-@router.post("/login", response_model=Token)
-async def login(
-    user_credentials: UserLogin,
+
+async def _issue_session_token(
+    *,
+    user: User,
     request: Request,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession,
+    remember_me: bool,
 ) -> Token:
-    """
-    Authenticate user and return JWT token.
-    Validates email/password combination and returns access token.
-    Implements account locking after failed attempts.
-    Registers an auth_session (jti) for Super Admin live visibility (P1).
-    """
-    
-    user = await auth_service.authenticate_user(
-        db, user_credentials.email, user_credentials.password
-    )
-    
-    if not user:
-        await activity_emitter.emit(
-            db,
-            event_type=evt.AUTH_LOGIN_FAILED,
-            payload={"email": user_credentials.email},
-            commit=True,
-        )
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid email or password",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-
+    """Create a JWT and auth_session. Each device gets its own session."""
     jti = auth_session_service.new_jti()
-    remember_me = bool(user_credentials.remember_me)
     expires_at = auth_service.token_expiry_datetime(remember_me=remember_me)
-
     token_response = await auth_service.create_token_response(
         user, remember_me=remember_me, jti=jti
     )
@@ -145,10 +121,104 @@ async def login(
         actor_user_id=user.id,
         resource_type="auth_session",
         resource_id=jti,
-        payload={"remember_me": remember_me, "role": user.role.value},
+        payload={"remember_me": remember_me, "role": user.role.value, "method": "otp"},
         commit=True,
     )
     return token_response
+
+
+@router.post("/otp/request", status_code=status.HTTP_200_OK)
+async def request_login_otp(
+    otp_request: OtpRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """
+    Email a 24-hour login OTP. Always returns a generic message.
+    Issuing a new code revokes any previous active code for that user.
+    """
+    from datetime import datetime
+
+    user = await otp_service.get_active_user_by_email(db, otp_request.email)
+    locked = bool(user and user.locked_until and user.locked_until > datetime.utcnow())
+    if not user:
+        logger.info(
+            "OTP not sent: no active account for %s",
+            otp_request.email.strip().lower(),
+        )
+    elif locked:
+        logger.info("OTP not sent: account locked for %s", user.email)
+    if user and not locked:
+        code = await otp_service.issue_code(
+            db, user, ip_address=_client_ip(request)
+        )
+        if code:
+            await db.commit()
+            user_name = (
+                f"{user.first_name or ''} {user.last_name or ''}".strip()
+                or user.email
+            )
+            try:
+                email_sent = await dispatch_login_otp_email(
+                    user_email=user.email,
+                    user_name=user_name,
+                    otp_code=code,
+                )
+                if email_sent:
+                    logger.info("Login OTP emailed to %s", user.email)
+                else:
+                    logger.warning("Failed to send login OTP to %s", user.email)
+            except Exception as email_error:
+                logger.error("Login OTP email error: %s", email_error)
+            await activity_emitter.emit(
+                db,
+                event_type=evt.AUTH_OTP_REQUESTED,
+                organization_id=user.organization_id,
+                actor_user_id=user.id,
+                resource_type="user",
+                resource_id=user.id,
+                commit=True,
+            )
+        else:
+            await db.commit()
+    return {"message": GENERIC_OTP_MESSAGE}
+
+
+@router.post("/otp/verify", response_model=Token)
+async def verify_login_otp(
+    otp_data: OtpVerify,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> Token:
+    """
+    Verify a login OTP and issue a JWT. The same code can be used on
+    additional devices until it expires or a new code is requested.
+    """
+    user, error = await otp_service.verify_code(db, otp_data.email, otp_data.code)
+    if not user:
+        await activity_emitter.emit(
+            db,
+            event_type=evt.AUTH_OTP_FAILED,
+            payload={"email": otp_data.email},
+            commit=True,
+        )
+        detail = (
+            "Too many failed attempts. Try again later."
+            if error == "locked"
+            else "Invalid or expired verification code"
+        )
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=detail,
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    return await _issue_session_token(
+        user=user,
+        request=request,
+        db=db,
+        remember_me=bool(otp_data.remember_me),
+    )
 
 
 @router.post("/logout", status_code=status.HTTP_200_OK)
@@ -226,7 +296,7 @@ async def verify_email(
 # Resend email verification link
 @router.post("/resend-verification", status_code=status.HTTP_200_OK)
 async def resend_verification_email(
-    email_request: PasswordReset,
+    email_request: EmailRequest,
     db: AsyncSession = Depends(get_db)
 ) -> dict:
     """
@@ -259,120 +329,6 @@ async def resend_verification_email(
         "message": "If the email exists and is unverified, a new verification link has been sent"
     }
 
-
-# Request password reset token
-@router.post("/forgot-password", status_code=status.HTTP_200_OK)
-async def forgot_password(
-    reset_request: PasswordReset,
-    db: AsyncSession = Depends(get_db)
-) -> dict:
-    """
-    Request password reset token.
-    Always returns success to prevent email enumeration attacks.
-    """
-    user = await auth_service.request_password_reset(db, reset_request.email)
-    if user and user.password_reset_token:
-        try:
-            user_name = f"{user.first_name or ''} {user.last_name or ''}".strip() or user.email
-            email_sent = await dispatch_password_reset_email(
-                user_email=user.email,
-                user_name=user_name,
-                reset_token=user.password_reset_token
-            )
-            if email_sent:
-                logger.info(f"Password reset email sent to {user.email}")
-            else:
-                logger.warning(f"Failed to send password reset email to {user.email}")
-        except Exception as email_error:
-            logger.error(f"Password reset email error: {str(email_error)}")
-    
-    return {
-        "message": "If the email exists, a password reset link has been sent"
-    }
-
-
-# Reset password with token
-@router.post("/reset-password", status_code=status.HTTP_200_OK)
-async def reset_password(
-    reset_data: PasswordResetConfirm,
-    db: AsyncSession = Depends(get_db)
-) -> dict:
-    """
-    Reset password with token.
-    """
-    
-    # Resolve user before reset so we can revoke sessions after success
-    from sqlalchemy import and_
-    from datetime import datetime
-
-    result = await db.execute(
-        select(User).where(
-            and_(
-                User.password_reset_token == reset_data.token,
-                User.password_reset_expires > datetime.utcnow(),
-            )
-        )
-    )
-    reset_user = result.scalar_one_or_none()
-
-    success = await auth_service.reset_password(
-        db, reset_data.token, reset_data.new_password
-    )
-    
-    if not success:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid or expired reset token"
-        )
-
-    if reset_user:
-        await auth_session_service.revoke_all_for_user(db, reset_user.id)
-    
-    return {"message": "Password reset successfully"}
-
-# Change password for authenticated user
-@router.post("/change-password", status_code=status.HTTP_200_OK)
-async def change_password(
-    password_data: PasswordChange,
-    current_user: User = Depends(get_current_active_user),
-    db: AsyncSession = Depends(get_db)
-) -> dict:
-    """
-    Change password for authenticated user.
-    Requires current password verification for security.
-    Prevents same password from being used again.
-    Revokes all auth sessions so the user must sign in again.
-    """
-
-    if auth_service.verify_password(password_data.new_password, current_user.password_hash):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="New password must be different from current password"
-        )
-
-    success = await auth_service.change_password(
-        db, current_user, password_data.current_password, password_data.new_password
-    )
-
-    if not success:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Current password is incorrect"
-        )
-
-    await auth_session_service.revoke_all_for_user(db, current_user.id)
-    await activity_emitter.emit(
-        db,
-        event_type=evt.AUTH_PASSWORD_CHANGED,
-        organization_id=current_user.organization_id,
-        actor_user_id=current_user.id,
-        resource_type="user",
-        resource_id=current_user.id,
-        commit=True,
-    )
-    logger.info(f"Password changed successfully for user {current_user.email}")
-
-    return {"message": "Password changed successfully"}
 
 # Get current authenticated user information
 @router.get("/me", response_model=UserResponse)

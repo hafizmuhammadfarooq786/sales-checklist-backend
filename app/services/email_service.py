@@ -108,8 +108,8 @@ class EmailService:
     async def send_verification_email_async(self, **kwargs) -> bool:
         return await self._send_in_thread(self.send_verification_email, **kwargs)
 
-    async def send_password_reset_email_async(self, **kwargs) -> bool:
-        return await self._send_in_thread(self.send_password_reset_email, **kwargs)
+    async def send_login_otp_email_async(self, **kwargs) -> bool:
+        return await self._send_in_thread(self.send_login_otp_email, **kwargs)
 
     async def send_welcome_email_async(self, **kwargs) -> bool:
         return await self._send_in_thread(self.send_welcome_email, **kwargs)
@@ -263,39 +263,29 @@ class EmailService:
             html_body=rendered["html_body"],
         )
 
-    def send_password_reset_email(
+    def send_login_otp_email(
         self,
         user_email: str,
         user_name: str,
-        reset_token: str,
-        base_url: Optional[str] = None,
+        otp_code: str,
     ) -> bool:
-        """
-        Send password reset email
-
-        Args:
-            user_email: User's email address
-            user_name: User's display name
-            reset_token: Password reset token
-            base_url: Base URL for reset link
-
-        Returns:
-            bool: True if email was sent successfully
-        """
-        resolved_base_url = base_url or settings.FRONTEND_URL
-        reset_url = f"{resolved_base_url}/reset-password?token={reset_token}"
-
+        """Send a 24-hour login OTP. Do not log the code."""
         rendered = self._render_slug(
-            "password_reset",
+            "login_otp",
             user_name=user_name,
             user_email=user_email,
-            reset_url=reset_url,
+            otp_code=otp_code,
         )
-
+        text_body = (
+            f"Hello {user_name},\n\n"
+            f"Your {settings.PROJECT_NAME} sign-in code is {otp_code}.\n"
+            f"This code is valid for 24 hours. Requesting a new code invalidates this one.\n"
+        )
         return self._send_email(
             to_emails=[user_email],
             subject=rendered["subject"],
             html_body=rendered["html_body"],
+            text_body=text_body,
         )
 
     def send_welcome_email(
@@ -395,17 +385,15 @@ class EmailService:
         user_name: str,
         organization_name: str,
         approver_name: str,
-        temp_password: str,
         sign_in_url: str,
     ) -> Dict[str, Any]:
-        """Build org registration approval email with credentials (no network I/O)."""
+        """Build org registration approval email (no network I/O)."""
         rendered = self._render_slug(
             "registration_approved",
             user_email=to_email,
             user_name=user_name,
             organization_name=organization_name,
             approver_name=approver_name,
-            temp_password=temp_password,
             sign_in_url=sign_in_url,
         )
         text_body = (
@@ -413,8 +401,7 @@ class EmailService:
             f"on {settings.PROJECT_NAME}.\n\n"
             f"Sign in: {sign_in_url}\n\n"
             f"Email: {to_email}\n"
-            f"Temporary password: {temp_password}\n\n"
-            f"You will be asked to set a new password after signing in.\n"
+            f"Enter your email on the sign-in page to receive a verification code.\n"
         )
 
         return {
@@ -441,7 +428,6 @@ class EmailService:
         invite_url: str,
         role: str,
         team_name: Optional[str] = None,
-        temp_password: Optional[str] = None,
         *,
         is_resend: bool = False,
     ) -> Dict[str, Any]:
@@ -454,7 +440,6 @@ class EmailService:
             invite_url=invite_url,
             role=role,
             team_name=team_name or "No team assigned",
-            temp_password=temp_password,
             is_resend=is_resend,
         )
 
@@ -463,15 +448,9 @@ class EmailService:
             f"{inviter_name} invited you to join {organization_name} on {settings.PROJECT_NAME}.\n\n"
             f"Role: {role}\n"
             f"Team: {team_line}\n\n"
-            f"Accept invitation: {invite_url}\n"
+            f"Accept invitation: {invite_url}\n\n"
+            f"After accepting, sign in with your email and the verification code we send you.\n"
         )
-        if temp_password:
-            text_body += (
-                f"\nSign in with:\n"
-                f"Email: {to_email}\n"
-                f"Temporary password: {temp_password}\n\n"
-                f"You will be asked to set a new password after signing in.\n"
-            )
 
         return {
             "to_email": to_email,
@@ -488,25 +467,10 @@ class EmailService:
         invite_url: str,
         role: str,
         team_name: Optional[str] = None,
-        temp_password: Optional[str] = None,
         *,
         is_resend: bool = False,
     ) -> bool:
-        """
-        Send organization invitation email with temporary password
-
-        Args:
-            to_email: Email address to send invitation to
-            organization_name: Name of the organization
-            inviter_name: Name of person sending invitation
-            invite_url: URL to accept invitation
-            role: User role (rep, manager, admin)
-            team_name: Optional team name
-            temp_password: Temporary password for initial login
-
-        Returns:
-            bool: True if email was sent successfully
-        """
+        """Send organization invitation email."""
         rendered = self.render_invitation_email(
             to_email=to_email,
             organization_name=organization_name,
@@ -514,7 +478,6 @@ class EmailService:
             invite_url=invite_url,
             role=role,
             team_name=team_name,
-            temp_password=temp_password,
             is_resend=is_resend,
         )
 

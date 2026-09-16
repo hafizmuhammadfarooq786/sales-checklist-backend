@@ -90,23 +90,22 @@ def build_sample_context(slug: str) -> dict[str, Any]:
             "user_email": "alex.rivera@example.com",
             "verification_url": f"{base_url}/verify-email?token=sample-preview-token",
         },
-        "password_reset": {
-            "user_name": "Alex Rivera",
-            "user_email": "alex.rivera@example.com",
-            "reset_url": f"{base_url}/reset-password?token=sample-preview-token",
-        },
         "welcome": {
             "user_name": "Alex Rivera",
             "user_email": "alex.rivera@example.com",
             "dashboard_url": f"{base_url}/dashboard",
+        },
+        "login_otp": {
+            "user_name": "Alex Rivera",
+            "user_email": "alex.rivera@example.com",
+            "otp_code": "482917",
         },
         "registration_approved": {
             "user_name": "Alex Rivera",
             "user_email": "alex.rivera@example.com",
             "organization_name": "Acme Sales",
             "approver_name": "Dana Park",
-            "temp_password": "SamplePass123",
-            "sign_in_url": f"{base_url}/login",
+            "sign_in_url": f"{base_url}/sign-in",
         },
         "invitation": {
             "user_email": "alex.rivera@example.com",
@@ -115,7 +114,6 @@ def build_sample_context(slug: str) -> dict[str, Any]:
             "invite_url": f"{base_url}/accept-invite?token=sample-preview-token",
             "role": "rep",
             "team_name": "Enterprise West",
-            "temp_password": "SamplePass123",
             "is_resend": False,
         },
         "manager_note": {

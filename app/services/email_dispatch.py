@@ -67,23 +67,21 @@ async def dispatch_verification_email(
     )
 
 
-async def dispatch_password_reset_email(
-    *, user_email: str, user_name: str, reset_token: str
+async def dispatch_login_otp_email(
+    *, user_email: str, user_name: str, otp_code: str
 ) -> bool:
     payload = {
         "user_email": user_email,
         "user_name": user_name,
-        "reset_token": reset_token,
+        "otp_code": otp_code,
     }
-    from app.tasks.email import send_password_reset_email_task
+    from app.tasks.email import send_login_otp_email_task
 
     return await _dispatch(
-        task=send_password_reset_email_task,
+        task=send_login_otp_email_task,
         payload=payload,
         recipients=user_email,
-        inline_send=lambda: get_email_service().send_password_reset_email_async(
-            **payload
-        ),
+        inline_send=lambda: get_email_service().send_login_otp_email_async(**payload),
     )
 
 
@@ -130,7 +128,6 @@ async def dispatch_registration_approved_email(
     user_name: str,
     organization_name: str,
     approver_name: str,
-    temp_password: str,
     sign_in_url: str,
 ) -> bool:
     service = get_email_service()
@@ -139,7 +136,6 @@ async def dispatch_registration_approved_email(
         user_name=user_name,
         organization_name=organization_name,
         approver_name=approver_name,
-        temp_password=temp_password,
         sign_in_url=sign_in_url,
     )
     from app.tasks.email import send_registration_approved_email_task
@@ -160,7 +156,6 @@ async def dispatch_organization_invitation_email(
     invite_url: str,
     role: str,
     team_name: Optional[str] = None,
-    temp_password: Optional[str] = None,
     is_resend: bool = False,
 ) -> bool:
     service = get_email_service()
@@ -171,7 +166,6 @@ async def dispatch_organization_invitation_email(
         invite_url=invite_url,
         role=role,
         team_name=team_name,
-        temp_password=temp_password,
         is_resend=is_resend,
     )
     from app.tasks.email import send_invitation_email_task

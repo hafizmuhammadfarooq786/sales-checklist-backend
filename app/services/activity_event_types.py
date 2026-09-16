@@ -5,8 +5,8 @@ Activity event types — starter catalog for Super Admin observability (P2).
 # Auth
 AUTH_LOGIN = "auth.login"
 AUTH_LOGOUT = "auth.logout"
-AUTH_LOGIN_FAILED = "auth.login_failed"
-AUTH_PASSWORD_CHANGED = "auth.password_changed"
+AUTH_OTP_REQUESTED = "auth.otp_requested"
+AUTH_OTP_FAILED = "auth.otp_failed"
 
 # Org lifecycle
 ORG_APPROVED = "org.approved"

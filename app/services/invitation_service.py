@@ -3,7 +3,6 @@ Invitation Service
 Handles user invitation logic, token generation, and email sending
 """
 import secrets
-import string
 from datetime import datetime, timedelta
 from typing import Optional, Dict
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,7 +12,6 @@ from sqlalchemy.orm import selectinload
 from app.models.invitation import Invitation
 from app.models.user import User, UserRole, Organization, Team
 from app.services.email_dispatch import dispatch_organization_invitation_email
-from app.services.auth_service import auth_service
 
 
 def exclude_users_with_pending_invitations(organization_id: int, user_email_column):
@@ -41,30 +39,6 @@ class InvitationService:
         """
         return secrets.token_urlsafe(32)
 
-    def generate_temp_password(self) -> str:
-        """
-        Generate a secure temporary password.
-
-        Returns:
-            12-character password with mix of uppercase, lowercase, digits, and symbols
-        """
-        # Ensure password has at least one of each type
-        password_chars = [
-            secrets.choice(string.ascii_uppercase),  # At least one uppercase
-            secrets.choice(string.ascii_lowercase),  # At least one lowercase
-            secrets.choice(string.digits),           # At least one digit
-            secrets.choice('!@#$%^&*'),              # At least one special char
-        ]
-
-        # Fill remaining 8 characters randomly
-        all_chars = string.ascii_letters + string.digits + '!@#$%^&*'
-        password_chars.extend(secrets.choice(all_chars) for _ in range(8))
-
-        # Shuffle to avoid predictable pattern
-        secrets.SystemRandom().shuffle(password_chars)
-
-        return ''.join(password_chars)
-
     async def create_invitation(
         self,
         db: AsyncSession,
@@ -82,7 +56,7 @@ class InvitationService:
         auto_commit: bool = True,
     ) -> Invitation:
         """
-        Create a new invitation, create user account with temporary password, and send invitation email.
+        Create a new invitation, create the user account, and send the invitation email.
 
         Args:
             db: Database session
@@ -122,17 +96,10 @@ class InvitationService:
         if existing_inv:
             raise ValueError(f"An active invitation already exists for {email}")
 
-        # Generate temporary password and token
-        temp_password = self.generate_temp_password()
-        token = self.generate_token()
-        expires_at = datetime.utcnow() + timedelta(days=self.token_expiry_days)
-
-        # Create user account immediately with temporary password
-        # DB userrole enum expects uppercase (REP, MANAGER, ADMIN)
+        # Create user account immediately. Sign-in uses email OTP, not a password.
         user_role = UserRole(role.upper())
         new_user = User(
             email=email,
-            password_hash=auth_service.hash_password(temp_password),
             first_name=(first_name or "").strip() or None,
             last_name=(last_name or "").strip() or None,
             job_title=(job_title or "").strip() or None,
@@ -142,8 +109,10 @@ class InvitationService:
             team_id=team_id,
             role=user_role,
             is_active=True,
-            must_change_password=True  # Force password change on first login
         )
+        token = self.generate_token()
+        expires_at = datetime.utcnow() + timedelta(days=self.token_expiry_days)
+
         db.add(new_user)
         await db.flush()
 
@@ -163,7 +132,7 @@ class InvitationService:
         await db.refresh(invitation)
 
         await self._send_invitation_email_for_record(
-            db, invitation, temp_password, frontend_url
+            db, invitation, frontend_url
         )
 
         from app.services.activity_emitter import activity_emitter
@@ -188,7 +157,6 @@ class InvitationService:
         self,
         db: AsyncSession,
         invitation: Invitation,
-        temp_password: str,
         frontend_url: str,
         *,
         is_resend: bool = False,
@@ -225,7 +193,6 @@ class InvitationService:
             invite_url=invite_url,
             role=invitation.role,
             team_name=team_name,
-            temp_password=temp_password,
             is_resend=is_resend,
         )
         if not email_sent:
@@ -238,7 +205,7 @@ class InvitationService:
         organization_id: int,
         frontend_url: str,
     ) -> Invitation:
-        """Regenerate invite token + temp password and resend the invitation email."""
+        """Regenerate invite token and resend the invitation email."""
         result = await db.execute(
             select(Invitation).where(Invitation.id == invitation_id)
         )
@@ -260,16 +227,13 @@ class InvitationService:
         if not user:
             raise ValueError("Invited user account not found")
 
-        temp_password = self.generate_temp_password()
-        user.password_hash = auth_service.hash_password(temp_password)
-        user.must_change_password = True
         user.is_active = True
 
         invitation.token = self.generate_token()
         invitation.expires_at = datetime.utcnow() + timedelta(days=self.token_expiry_days)
 
         await self._send_invitation_email_for_record(
-            db, invitation, temp_password, frontend_url, is_resend=True
+            db, invitation, frontend_url, is_resend=True
         )
         from app.services.activity_emitter import activity_emitter
         from app.services import activity_event_types as evt
@@ -397,7 +361,7 @@ class InvitationService:
         if user.email.lower() != invitation.email.lower():
             raise ValueError("Email address does not match invitation")
 
-        # Mark user as verified (they successfully logged in with temp password)
+        # Mark user as verified (they successfully signed in with an OTP)
         user.is_verified = True
         # Mark user as active once the invitation is accepted.
         # This keeps the "already members" view consistent with invitation lifecycle.
