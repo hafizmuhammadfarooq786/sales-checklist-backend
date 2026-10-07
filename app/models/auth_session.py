@@ -2,7 +2,7 @@
 Auth session registry — tracks JWT logins for Super Admin visibility (P1).
 """
 from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey, Text
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import backref, relationship
 
 from app.models.base import Base
 
@@ -37,7 +37,10 @@ class AuthSession(Base):
     user_agent = Column(Text, nullable=True)
     remember_me = Column(Boolean, default=False, nullable=False)
 
-    user = relationship("User", backref="auth_sessions")
+    user = relationship(
+        "User",
+        backref=backref("auth_sessions", passive_deletes=True),
+    )
     organization = relationship("Organization", backref="auth_sessions")
 
     @property

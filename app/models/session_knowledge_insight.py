@@ -1,7 +1,7 @@
 """Cached session-level organization knowledge intelligence (Phase 3)."""
 from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, Text
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import backref, relationship
 from sqlalchemy.sql import func
 
 from app.models.base import Base
@@ -43,4 +43,8 @@ class SessionKnowledgeInsight(Base):
         onupdate=func.now(),
     )
 
-    session = relationship("Session", backref="knowledge_insight", uselist=False)
+    session = relationship(
+        "Session",
+        backref=backref("knowledge_insight", passive_deletes=True),
+        uselist=False,
+    )

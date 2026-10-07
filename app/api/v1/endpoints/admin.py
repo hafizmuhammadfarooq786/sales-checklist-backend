@@ -7,14 +7,23 @@ import base64
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Header
 from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, or_, delete
+from sqlalchemy import select, func, or_, delete, update
 from sqlalchemy.orm import selectinload
 from typing import List, Optional
 from datetime import datetime
 from sqlalchemy.exc import IntegrityError
 
 from app.db.session import get_db
-from app.models import Organization, User, Team, OrganizationSettings
+from app.models import (
+    Organization,
+    User,
+    Team,
+    OrganizationSettings,
+    AuthSession,
+    LoginOtp,
+    Session,
+    ManagerNote,
+)
 from app.models.invitation import Invitation
 from app.models.organization_registration import (
     OrganizationRegistrationRequest,
@@ -754,7 +763,9 @@ async def delete_user(
     """
     Hard delete a user (SYSTEM_ADMIN only).
 
-    This permanently removes the user record.
+    The user may belong to any organization. Deletion is allowed only when
+    the account is inactive. Related deal sessions and notes are removed
+    with them.
     """
     result = await db.execute(
         select(User).where(User.id == user_id)
@@ -774,9 +785,37 @@ async def delete_user(
             detail="Cannot delete your own user account"
         )
 
-    # Hard delete: permanently remove user row.
-    await db.delete(user)
-    await db.commit()
+    if user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Deactivate the user before deleting them."
+        )
+
+    try:
+        # session.delete(user) loads backrefs and sets their user_id to NULL
+        # before DELETE. auth_sessions and login_otp_codes keep rows after a
+        # revoke, and those user_id columns are NOT NULL, so the flush raises
+        # IntegrityError and the API returns 500. The same happens for deal
+        # sessions whose child rows (knowledge insights, checklist context)
+        # are NOT NULL. SQL DELETE lets PostgreSQL ON DELETE CASCADE run.
+        await db.execute(delete(AuthSession).where(AuthSession.user_id == user_id))
+        await db.execute(delete(LoginOtp).where(LoginOtp.user_id == user_id))
+        await db.execute(delete(ManagerNote).where(ManagerNote.manager_id == user_id))
+        await db.execute(delete(Session).where(Session.user_id == user_id))
+        await db.execute(
+            update(User).where(User.deleted_by == user_id).values(deleted_by=None)
+        )
+        db.expunge(user)
+        await db.execute(delete(User).where(User.id == user_id))
+        await db.commit()
+    except IntegrityError as exc:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "Cannot delete this user because related records still reference them."
+            ),
+        ) from exc
 
 
 @router.post("/users/{user_id}/restore", response_model=UserResponse)
