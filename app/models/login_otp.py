@@ -2,7 +2,7 @@
 Login OTP codes — passwordless email verification for sign-in.
 """
 from sqlalchemy import Column, Integer, String, DateTime, ForeignKey
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import backref, relationship
 
 from app.models.base import Base
 
@@ -31,4 +31,7 @@ class LoginOtp(Base):
     created_at = Column(DateTime, nullable=False, index=True)
     ip_address = Column(String(64), nullable=True)
 
-    user = relationship("User", backref="login_otp_codes")
+    user = relationship(
+        "User",
+        backref=backref("login_otp_codes", passive_deletes=True),
+    )

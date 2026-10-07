@@ -1,6 +1,6 @@
 """Per-session deal context for checklist items (Organization Knowledge Intelligence)."""
 from sqlalchemy import Column, Integer, Text, ForeignKey, UniqueConstraint
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import backref, relationship
 
 from app.models.base import Base, TimestampMixin
 
@@ -32,5 +32,8 @@ class SessionChecklistItemContext(Base, TimestampMixin):
     )
     deal_context = Column(Text, nullable=True)
 
-    session = relationship("Session", backref="checklist_item_contexts")
+    session = relationship(
+        "Session",
+        backref=backref("checklist_item_contexts", passive_deletes=True),
+    )
     checklist_item = relationship("ChecklistItem", backref="session_contexts")
