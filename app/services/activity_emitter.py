@@ -4,7 +4,7 @@ ActivityEmitter — write first-party activity events (no third-party analytics)
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Set
 from uuid import uuid4
 
@@ -30,6 +30,20 @@ _BLOCKED_PAYLOAD_KEYS: Set[str] = {
     "transcript",
     "audio",
 }
+
+
+def _as_naive_utc(value: Optional[datetime]) -> Optional[datetime]:
+    """activity_events.occurred_at is TIMESTAMP WITHOUT TIME ZONE (UTC).
+
+    The admin UI sends `from` as an ISO string with a Z suffix, which FastAPI
+    parses as timezone-aware. asyncpg then rejects the comparison and the
+    events endpoint returns 500 for every organization.
+    """
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value
+    return value.astimezone(timezone.utc).replace(tzinfo=None)
 
 
 def _sanitize_payload(payload: Optional[Dict[str, Any]]) -> Dict[str, Any]:
@@ -120,6 +134,9 @@ class ActivityEmitter:
         cursor_occurred_at: Optional[datetime] = None,
         cursor_id: Optional[str] = None,
     ) -> List[ActivityEvent]:
+        from_dt = _as_naive_utc(from_dt)
+        to_dt = _as_naive_utc(to_dt)
+        cursor_occurred_at = _as_naive_utc(cursor_occurred_at)
         query = (
             select(ActivityEvent)
             .options(
@@ -160,6 +177,7 @@ class ActivityEmitter:
         from_dt: Optional[datetime] = None,
         limit: int = 40,
     ) -> List[ActivityEvent]:
+        from_dt = _as_naive_utc(from_dt)
         query = select(ActivityEvent).options(
             selectinload(ActivityEvent.actor),
             selectinload(ActivityEvent.organization),
