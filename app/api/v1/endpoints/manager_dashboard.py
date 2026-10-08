@@ -6,7 +6,7 @@ import logging
 from datetime import date, datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_, func, case, desc
+from sqlalchemy import select, and_, func, case, desc, exists, or_
 from typing import List, Optional
 from pydantic import BaseModel
 
@@ -148,6 +148,28 @@ def can_view_team_data(user: User) -> bool:
     return user.role in [UserRole.MANAGER, UserRole.ADMIN, UserRole.SYSTEM_ADMIN]
 
 
+def _established_member_clause(organization_id: Optional[int]):
+    """Who counts on the dashboard when an invitation is still open.
+
+    Inviting someone creates their account immediately and leaves the invitation
+    unaccepted. Sign-in is email OTP and does not accept that invitation, so the
+    person can already own checklists. Active Checklists uses session access and
+    still shows those deals. The raw pending-invitation filter hid every manager
+    and rep in that state, which zeroed the dashboard (team size, scores, alerts,
+    and checklist counts) while the checklist page stayed correct.
+
+    People who have signed in, or who already own a checklist, stay on the
+    dashboard. Invitees who have never signed in and have no checklists stay
+    off it.
+    """
+    owns_checklist = exists().where(Session.user_id == User.id)
+    return or_(
+        exclude_users_with_pending_invitations(organization_id, User.email),
+        User.last_login.isnot(None),
+        owns_checklist,
+    )
+
+
 async def get_team_members(user: User, db: AsyncSession) -> List[int]:
     """Get list of team member IDs based on user's role"""
     if user.role == UserRole.SYSTEM_ADMIN:
@@ -162,7 +184,7 @@ async def get_team_members(user: User, db: AsyncSession) -> List[int]:
                 User.organization_id == user.organization_id,
                 User.deleted_at.is_(None),
                 User.role.in_([UserRole.MANAGER, UserRole.REP]),
-                exclude_users_with_pending_invitations(user.organization_id, User.email),
+                _established_member_clause(user.organization_id),
             )
         )
         return [row[0] for row in result.all()]
@@ -173,7 +195,7 @@ async def get_team_members(user: User, db: AsyncSession) -> List[int]:
             select(User.id).where(
                 manager_visible_users_filter(user),
                 User.role.in_([UserRole.MANAGER, UserRole.REP]),
-                exclude_users_with_pending_invitations(user.organization_id, User.email),
+                _established_member_clause(user.organization_id),
             )
         )
         return [row[0] for row in result.all()]

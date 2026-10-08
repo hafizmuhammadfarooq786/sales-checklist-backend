@@ -100,6 +100,9 @@ async def _issue_session_token(
     remember_me: bool,
 ) -> Token:
     """Create a JWT and auth_session. Each device gets its own session."""
+    from app.services.invitation_service import get_invitation_service
+
+    await get_invitation_service().accept_open_invitations_for_user(db, user)
     jti = auth_session_service.new_jti()
     expires_at = auth_service.token_expiry_datetime(remember_me=remember_me)
     token_response = await auth_service.create_token_response(
