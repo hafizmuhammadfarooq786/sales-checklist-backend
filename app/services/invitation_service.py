@@ -387,6 +387,56 @@ class InvitationService:
         await db.commit()
         return True
 
+    async def accept_open_invitations_for_user(
+        self,
+        db: AsyncSession,
+        user: User,
+    ) -> int:
+        """Accept leftover invitations once this person signs in.
+
+        The invite creates a usable account, but passwordless sign-in never
+        called accept_invitation. The invitation stayed pending, and the
+        dashboard then dropped the member and every checklist they own.
+        """
+        if not user.organization_id or not user.email:
+            return 0
+
+        result = await db.execute(
+            select(Invitation).where(
+                Invitation.organization_id == user.organization_id,
+                Invitation.accepted_at.is_(None),
+                func.lower(Invitation.email) == user.email.strip().lower(),
+            )
+        )
+        invitations = list(result.scalars().all())
+        if not invitations:
+            return 0
+
+        now = datetime.utcnow()
+        user.is_verified = True
+        user.is_active = True
+
+        from app.services.activity_emitter import activity_emitter
+        from app.services import activity_event_types as evt
+
+        for invitation in invitations:
+            invitation.accepted_at = now
+            await activity_emitter.emit(
+                db,
+                event_type=evt.INVITE_ACCEPTED,
+                organization_id=invitation.organization_id,
+                actor_user_id=user.id,
+                resource_type="invitation",
+                resource_id=invitation.id,
+                payload={
+                    "email": invitation.email,
+                    "role": invitation.role,
+                    "via": "otp_login",
+                },
+                commit=False,
+            )
+        return len(invitations)
+
     async def get_pending_invitations(
         self,
         db: AsyncSession,
