@@ -7,6 +7,7 @@ from app.api.v1.endpoints import (
     auth,
     checklists,
     sessions,
+    session_shares,
     users,
     uploads,
     scoring,
@@ -29,6 +30,7 @@ api_router = APIRouter()
 api_router.include_router(auth.router)
 api_router.include_router(checklists.router, prefix="/checklists", tags=["Checklists"])
 api_router.include_router(sessions.router, prefix="/sessions", tags=["Sessions"])
+api_router.include_router(session_shares.router, prefix="/sessions", tags=["Sessions"])
 api_router.include_router(uploads.router, prefix="/sessions", tags=["Uploads"])
 api_router.include_router(scoring.router, prefix="/sessions", tags=["Scoring"])
 api_router.include_router(scoring.router, prefix="/scoring", tags=["Scoring"])

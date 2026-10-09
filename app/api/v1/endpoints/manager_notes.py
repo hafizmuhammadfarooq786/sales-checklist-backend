@@ -21,7 +21,11 @@ from app.schemas.manager_note import (
     ManagerNoteResponse,
     ManagerNoteListResponse
 )
-from app.api.dependencies import get_current_user, manager_can_view_owned_session
+from app.api.dependencies import (
+    check_session_access,
+    get_current_user,
+    manager_can_view_owned_session,
+)
 from app.services.email_dispatch import dispatch_manager_note_email
 
 router = APIRouter()
@@ -457,8 +461,10 @@ async def get_session_notes(
             detail="Session not found"
         )
 
-    # Check if user can view this session
-    if not can_view_session(current_user, session):
+    # Owners, managers, and salespeople a manager added can read these notes.
+    if not can_view_session(current_user, session) and not await check_session_access(
+        session_id, current_user, db
+    ):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You don't have permission to view notes on this session"

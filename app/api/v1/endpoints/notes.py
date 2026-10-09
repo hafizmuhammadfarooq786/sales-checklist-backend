@@ -39,8 +39,10 @@ async def _require_session_notes_access(
     session_id: int,
     current_user: User,
     db: AsyncSession,
+    *,
+    write: bool = False,
 ):
-    if not await check_session_access(session_id, current_user, db):
+    if not await check_session_access(session_id, current_user, db, write=write):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Session not found",
@@ -72,7 +74,9 @@ async def bulk_save_notes(
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
 ):
-    session_row, key = await _require_session_notes_access(session_id, current_user, db)
+    session_row, key = await _require_session_notes_access(
+        session_id, current_user, db, write=True
+    )
     return await bulk_upsert(db, session_row, key, current_user.id, body.items)
 
 
@@ -84,7 +88,9 @@ async def upsert_one_note(
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
 ):
-    session_row, key = await _require_session_notes_access(session_id, current_user, db)
+    session_row, key = await _require_session_notes_access(
+        session_id, current_user, db, write=True
+    )
     row = await upsert_single(
         db,
         session_row,
@@ -141,7 +147,9 @@ async def soft_clear_note(
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
 ):
-    session_row, key = await _require_session_notes_access(session_id, current_user, db)
+    session_row, key = await _require_session_notes_access(
+        session_id, current_user, db, write=True
+    )
     row = await soft_delete_item(
         db, session_row, key, checklist_item_id, current_user.id
     )
@@ -163,7 +171,9 @@ async def edit_history_note(
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
 ):
-    _session_row, key = await _require_session_notes_access(session_id, current_user, db)
+    _session_row, key = await _require_session_notes_access(
+        session_id, current_user, db, write=True
+    )
     row = await update_note_version(
         db,
         key,
@@ -188,7 +198,9 @@ async def delete_history_note(
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
 ):
-    _session_row, key = await _require_session_notes_access(session_id, current_user, db)
+    _session_row, key = await _require_session_notes_access(
+        session_id, current_user, db, write=True
+    )
     row = await delete_note_version(
         db, key, checklist_item_id, note_id, current_user.id
     )

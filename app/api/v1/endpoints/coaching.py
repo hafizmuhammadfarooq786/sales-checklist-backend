@@ -12,7 +12,11 @@ from app.db.session import get_db
 from app.models.session import Session, SessionStatus
 from app.models.scoring import ScoringResult, CoachingFeedback
 from app.models.user import User
-from app.api.dependencies import get_current_user, get_session_access_filter
+from app.api.dependencies import (
+    get_current_user,
+    get_session_access_filter,
+    get_session_write_filter,
+)
 from app.services.coaching_service import get_coaching_service
 
 router = APIRouter()
@@ -44,7 +48,7 @@ async def generate_coaching_feedback(
     - SYSTEM_ADMIN: Can generate for all sessions
     """
     # Verify session access with RBAC
-    access_filter = get_session_access_filter(current_user)
+    access_filter = get_session_write_filter(current_user)
     session_result = await db.execute(
         select(Session).where(
             Session.id == session_id,
@@ -216,7 +220,7 @@ async def regenerate_coaching_feedback(
     - SYSTEM_ADMIN: Can regenerate for all sessions
     """
     # Verify session access with RBAC
-    access_filter = get_session_access_filter(current_user)
+    access_filter = get_session_write_filter(current_user)
     session_result = await db.execute(
         select(Session).where(
             Session.id == session_id,

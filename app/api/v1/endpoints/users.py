@@ -16,7 +16,7 @@ from app.schemas.user import (
     OrganizationResponse,
     PipelineMetrics,
 )
-from app.api.dependencies import get_current_active_user, get_session_access_filter
+from app.api.dependencies import get_current_active_user, get_session_write_filter
 from app.core.dashboard_date import get_dashboard_date_range
 
 router = APIRouter()
@@ -137,7 +137,7 @@ async def get_current_user_metrics(
             detail="start_date must be on or before end_date",
         )
 
-    access_filter = get_session_access_filter(current_user)
+    access_filter = get_session_write_filter(current_user)
     range_start, range_end, _, _ = get_dashboard_date_range(start_date, end_date)
     dated_filter = and_(
         access_filter,

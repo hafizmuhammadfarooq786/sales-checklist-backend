@@ -88,6 +88,8 @@ class SessionResponse(BaseModel):
     completed_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
+    # edit: role already allows changes. read: a manager shared this checklist.
+    viewer_access: str = "edit"
 
     # Convert session_mode to lowercase for API consistency
     @field_serializer('session_mode')
