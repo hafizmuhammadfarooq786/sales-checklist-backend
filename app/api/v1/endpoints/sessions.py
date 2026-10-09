@@ -34,6 +34,7 @@ from app.api.dependencies import (
     get_current_user_id,
     get_current_user,
     get_session_access_filter,
+    get_session_write_filter,
     check_session_access,
 )
 from app.services.knowledge_rag_service import ask_organization_knowledge, is_knowledge_base_enabled
@@ -449,8 +450,25 @@ async def list_sessions(
     count_result = await db.execute(count_query)
     total = count_result.scalar()
 
+    session_ids = [session.id for session in sessions]
+    editable_ids: set[int] = set()
+    if session_ids:
+        edit_rows = await db.execute(
+            select(Session.id).where(
+                Session.id.in_(session_ids),
+                get_session_write_filter(current_user),
+            )
+        )
+        editable_ids = {row[0] for row in edit_rows.all()}
+
+    listed = []
+    for session in sessions:
+        item = SessionResponse.model_validate(session)
+        item.viewer_access = "edit" if session.id in editable_ids else "read"
+        listed.append(item)
+
     return SessionListResponse(
-        sessions=[SessionResponse.model_validate(s) for s in sessions],
+        sessions=listed,
         total=total,
         page=page,
         page_size=page_size
@@ -607,7 +625,10 @@ async def get_session(
     )
     session = result.scalar_one_or_none()
 
-    return SessionResponse.model_validate(session)
+    payload = SessionResponse.model_validate(session)
+    can_edit = await check_session_access(session_id, current_user, db, write=True)
+    payload.viewer_access = "edit" if can_edit else "read"
+    return payload
 
 
 @router.post("/{session_id}/knowledge-base/ask", response_model=KnowledgeAskResponse)
@@ -618,7 +639,7 @@ async def ask_session_knowledge_base(
     db: AsyncSession = Depends(get_db),
 ):
     """Ask organization AI using approved knowledge base content for this deal."""
-    has_access = await check_session_access(session_id, current_user, db)
+    has_access = await check_session_access(session_id, current_user, db, write=True)
     if not has_access:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
 
@@ -677,7 +698,7 @@ async def analyze_session_knowledge_insights(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    has_access = await check_session_access(session_id, current_user, db)
+    has_access = await check_session_access(session_id, current_user, db, write=True)
     if not has_access:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
 
@@ -720,7 +741,7 @@ async def get_session_embedded_coaching(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    has_access = await check_session_access(session_id, current_user, db)
+    has_access = await check_session_access(session_id, current_user, db, write=True)
     if not has_access:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
 
@@ -763,7 +784,7 @@ async def update_session(
     - ADMIN: Can update sessions from users in their organization
     """
     # Check role-based access
-    has_access = await check_session_access(session_id, current_user, db)
+    has_access = await check_session_access(session_id, current_user, db, write=True)
 
     if not has_access:
         raise HTTPException(
@@ -803,7 +824,7 @@ async def delete_session(
     - ADMIN: Can delete sessions from users in their organization
     """
     # Check role-based access
-    has_access = await check_session_access(session_id, current_user, db)
+    has_access = await check_session_access(session_id, current_user, db, write=True)
 
     if not has_access:
         raise HTTPException(
@@ -1002,7 +1023,7 @@ async def update_checklist_item_context(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    has_access = await check_session_access(session_id, current_user, db)
+    has_access = await check_session_access(session_id, current_user, db, write=True)
     if not has_access:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
 
@@ -1030,7 +1051,7 @@ async def get_checklist_item_intelligence_endpoint(
     db: AsyncSession = Depends(get_db),
 ):
     """Surface org knowledge, expertise, and Yes/No guidance for a checklist item."""
-    has_access = await check_session_access(session_id, current_user, db)
+    has_access = await check_session_access(session_id, current_user, db, write=True)
     if not has_access:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
 
@@ -1086,7 +1107,7 @@ async def update_checklist_item(
     - ADMIN: Can update checklists from users in their organization
     """
     # Check role-based access
-    has_access = await check_session_access(session_id, current_user, db)
+    has_access = await check_session_access(session_id, current_user, db, write=True)
 
     if not has_access:
         raise HTTPException(
@@ -1189,7 +1210,7 @@ async def submit_manual_checklist(
     - ADMIN: Can submit checklists from users in their organization
     """
     # Check role-based access
-    has_access = await check_session_access(session_id, current_user, db)
+    has_access = await check_session_access(session_id, current_user, db, write=True)
 
     if not has_access:
         raise HTTPException(
@@ -1378,7 +1399,7 @@ async def submit_checklist(
     - ADMIN: Can submit checklists from users in their organization
     """
     # Check role-based access
-    has_access = await check_session_access(session_id, current_user, db)
+    has_access = await check_session_access(session_id, current_user, db, write=True)
 
     if not has_access:
         raise HTTPException(
@@ -1638,7 +1659,7 @@ async def resubmit_checklist(
     - ADMIN: Can resubmit org checklists
     """
     # Check role-based access
-    has_access = await check_session_access(session_id, current_user, db)
+    has_access = await check_session_access(session_id, current_user, db, write=True)
 
     if not has_access:
         raise HTTPException(

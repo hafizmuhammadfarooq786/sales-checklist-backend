@@ -4,7 +4,7 @@ API Dependencies for authentication and authorization
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, true
+from sqlalchemy import or_, select, true
 from typing import Optional
 
 from app.db.session import get_db
@@ -216,19 +216,8 @@ def manager_can_view_owned_session(manager: User, owner: Optional[User]) -> bool
     return True
 
 
-def get_session_access_filter(current_user: User):
-    """
-    Build SQLAlchemy filter conditions based on user role for session access.
-
-    Role-Based Access Logic:
-    - ADMIN: Can access ALL sessions in their organization (from non-deleted users)
-    - MANAGER: Can access sessions from their team, or the whole organization
-      when they are not assigned to a team (from non-deleted users)
-    - REP: Can only access their own sessions
-
-    Returns:
-        SQLAlchemy filter condition to be used in WHERE clause
-    """
+def _native_session_access_filter(current_user: User):
+    """Sessions this user can open because of their role, before read-only shares."""
     from app.models.session import Session
     from sqlalchemy import and_
 
@@ -257,10 +246,42 @@ def get_session_access_filter(current_user: User):
         return Session.user_id == current_user.id
 
 
+def get_session_write_filter(current_user: User):
+    """Sessions this user may change. Read-only shares are not included."""
+    return _native_session_access_filter(current_user)
+
+
+def get_session_access_filter(current_user: User):
+    """
+    Build SQLAlchemy filter conditions based on user role for session access.
+
+    Role-Based Access Logic:
+    - ADMIN: Can access ALL sessions in their organization (from non-deleted users)
+    - MANAGER: Can access sessions from their team, or the whole organization
+      when they are not assigned to a team (from non-deleted users)
+    - REP: Can access their own sessions, plus sessions a manager shared with them
+
+    A shared salesperson can view the checklist and results. They cannot change them.
+    """
+    from app.models.session import Session
+    from app.models.session_share import SessionShare
+
+    native = _native_session_access_filter(current_user)
+    if current_user.role == UserRole.SYSTEM_ADMIN:
+        return native
+
+    shared = Session.id.in_(
+        select(SessionShare.session_id).where(SessionShare.user_id == current_user.id)
+    )
+    return or_(native, shared)
+
+
 async def check_session_access(
     session_id: int,
     current_user: User,
-    db: AsyncSession
+    db: AsyncSession,
+    *,
+    write: bool = False,
 ) -> bool:
     """
     Check if current user has access to a specific session based on their role.
@@ -275,8 +296,12 @@ async def check_session_access(
     """
     from app.models.session import Session
 
-    # Build query with role-based filter
-    access_filter = get_session_access_filter(current_user)
+    # Build query with role-based filter. Writes ignore read-only shares.
+    access_filter = (
+        get_session_write_filter(current_user)
+        if write
+        else get_session_access_filter(current_user)
+    )
 
     result = await db.execute(
         select(Session).where(

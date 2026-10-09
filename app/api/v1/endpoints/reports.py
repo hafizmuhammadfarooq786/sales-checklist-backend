@@ -17,7 +17,11 @@ from app.models.report import Report
 from app.models.checklist import ChecklistItem
 from app.models.user import User, Organization
 from app.models.organization_settings import OrganizationSettings
-from app.api.dependencies import get_current_user, get_session_access_filter
+from app.api.dependencies import (
+    get_current_user,
+    get_session_access_filter,
+    get_session_write_filter,
+)
 from app.services.report_service import build_notes_map_for_pdf, get_report_service
 from app.services.risk_band_service import get_risk_band
 
@@ -139,8 +143,8 @@ async def generate_report(
     - ADMIN: Can access org sessions
     - SYSTEM_ADMIN: Can access all sessions
     """
-    # Verify session access with RBAC
-    access_filter = get_session_access_filter(current_user)
+    # Generating a report changes stored output. Read-only shares cannot do this.
+    access_filter = get_session_write_filter(current_user)
     session_result = await db.execute(
         select(Session).where(
             Session.id == session_id,
@@ -437,7 +441,6 @@ async def get_report(
     - ADMIN: Can access org sessions
     - SYSTEM_ADMIN: Can access all sessions
     """
-    # Verify session access with RBAC
     access_filter = get_session_access_filter(current_user)
     session_result = await db.execute(
         select(Session).where(
@@ -522,7 +525,6 @@ async def download_report(
     - ADMIN: Can access org sessions
     - SYSTEM_ADMIN: Can access all sessions
     """
-    # Verify session access with RBAC
     access_filter = get_session_access_filter(current_user)
     session_result = await db.execute(
         select(Session).where(

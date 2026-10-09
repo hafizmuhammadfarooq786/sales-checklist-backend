@@ -15,6 +15,7 @@ from app.models.session import (
     Transcript,
     SessionResponse,
 )
+from app.models.session_share import SessionShare
 from app.models.scoring import ScoringResult, CoachingFeedback, RiskBand, ScoreHistory
 from app.models.report import Report, ReportFormat
 from app.models.invitation import Invitation
@@ -57,6 +58,7 @@ __all__ = [
     "AudioFile",
     "Transcript",
     "SessionResponse",
+    "SessionShare",
     "ScoringResult",
     "ScoreHistory",
     "CoachingFeedback",
