@@ -23,6 +23,7 @@ from app.api.v1.endpoints import (
     notes,
     public_registration,
     knowledge_base,
+    app_help,
 )
 api_router = APIRouter()
 
@@ -55,6 +56,7 @@ api_router.include_router(
     prefix="/organization/knowledge-base",
     tags=["Organization Knowledge Base"],
 )
+api_router.include_router(app_help.router, prefix="/app-help", tags=["App Help"])
 api_router.include_router(manager_notes.router, prefix="/sessions", tags=["Manager Notes"])
 api_router.include_router(manager_dashboard.router, prefix="/manager/dashboard", tags=["Manager Dashboard"])
 api_router.include_router(coaching_report.router, prefix="/coaching-report", tags=["Coaching Report"])
