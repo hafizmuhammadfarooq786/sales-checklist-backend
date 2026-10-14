@@ -23,12 +23,9 @@ logger = logging.getLogger(__name__)
 MAX_CONTEXT_ENTRIES = 12
 MAX_QUESTION_CHARS = 500
 
-# Reasoning models (gpt-5, o-series) spend this budget on internal reasoning
-# BEFORE emitting any visible text, and a long grounding context pushes that
-# reasoning cost up. A budget sized for the answer alone gets silently consumed,
-# so the stream ends empty or truncated mid-sentence. The answer itself stays
-# short — the headroom is for the reasoning in front of it.
-MAX_OUTPUT_TOKENS = 3000
+# Help answers are short by design. chat_completion_kwargs() adds the headroom a
+# reasoning model needs on top of this, so this stays the answer length we want.
+MAX_OUTPUT_TOKENS = 600
 
 SYSTEM_PROMPT = (
     "You are the in-app help assistant for the Sales Checklist™ application. "
