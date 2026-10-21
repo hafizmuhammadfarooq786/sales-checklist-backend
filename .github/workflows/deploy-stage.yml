@@ -14,8 +14,34 @@ env:
   AWS_REGION: us-east-2
 
 jobs:
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      # The suite never opens a connection, but app.db.session builds the engine
+      # at import time, so a parseable URL must exist for collection to succeed.
+      # No real database, no network and no secrets are involved.
+      - name: Run pytest
+        env:
+          DATABASE_URL: postgresql+asyncpg://test:test@localhost:5432/test
+        run: python -m pytest tests -q
+
   deploy:
     name: Deploy Backend to Staging
+    needs: test
     runs-on: ubuntu-latest
     environment: staging
 
