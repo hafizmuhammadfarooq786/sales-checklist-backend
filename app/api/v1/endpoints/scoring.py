@@ -1,214 +1,25 @@
 """
 Scoring API endpoints
-Calculate scores and risk bands for sessions
+
+Read-only views over scores already calculated when a checklist is submitted.
+Scores are written by the submit paths in `sessions.py`, not here.
 """
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
-from datetime import datetime
 
 from app.db.session import get_db
-from app.models.session import Session, SessionResponse, SessionStatus
+from app.models.session import Session
 from app.models.checklist import ChecklistItem
 from app.models.scoring import ScoringResult, ScoreHistory
 from app.models.user import User
 from app.api.dependencies import (
     get_current_user,
     get_session_access_filter,
-    get_session_write_filter,
 )
-from app.services.risk_band_service import get_risk_band, get_risk_label
 
 router = APIRouter()
-
-
-@router.post("/{session_id}/calculate", status_code=status.HTTP_201_CREATED)
-async def calculate_session_score(
-    session_id: int,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """
-    Calculate score for a session based on checklist responses
-    Scoring logic: 10 points per validated item (Yes), 0 for No, total out of 100
-
-    RBAC:
-    - REP: Can calculate own sessions
-    - MANAGER: Can calculate team sessions
-    - ADMIN: Can calculate org sessions
-    - SYSTEM_ADMIN: Can calculate all sessions
-    """
-    # Verify session access with RBAC
-    access_filter = get_session_write_filter(current_user)
-    session_result = await db.execute(
-        select(Session).where(
-            Session.id == session_id,
-            access_filter
-        )
-    )
-    session = session_result.scalar_one_or_none()
-
-    if not session:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Session not found or access denied"
-        )
-
-    # Get all responses with checklist items and categories
-    responses_result = await db.execute(
-        select(SessionResponse)
-        .where(SessionResponse.session_id == session_id)
-        .options(
-            selectinload(SessionResponse.item).selectinload(ChecklistItem.category)
-        )
-        .order_by(SessionResponse.item_id)
-    )
-    responses = responses_result.scalars().all()
-
-    if not responses:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="No responses found for this session. Initialize responses first."
-        )
-
-    # Calculate score (equal weight: 10 points per Yes, 0 per No)
-    total_score = 0
-    max_possible_score = len(responses) * 10  # 10 points per item
-    category_scores = {}
-    validated_items = []
-    unvalidated_items = []
-    
-    for response in responses:
-        item = response.item
-        category = item.category
-        
-        # Track category
-        if category.id not in category_scores:
-            category_scores[category.id] = {
-                "name": category.name,
-                "score": 0,
-                "max_score": 0,
-                "items": []
-            }
-        
-        category_scores[category.id]["max_score"] += 10
-
-        # Calculate score for this item
-        # Use user_answer if provided, otherwise use ai_answer
-        final_answer = response.user_answer if response.user_answer is not None else response.ai_answer
-
-        item_score = 0
-        if final_answer is True:
-            item_score = 10
-            total_score += 10
-            validated_items.append({
-                "id": item.id,
-                "title": item.title,
-                "category": category.name,
-                "score": 10
-            })
-        elif final_answer is False:
-            unvalidated_items.append({
-                "id": item.id,
-                "title": item.title,
-                "category": category.name,
-                "score": 0
-            })
-        # None/null means not answered yet, gets 0 points
-
-        category_scores[category.id]["score"] += item_score
-        category_scores[category.id]["items"].append({
-            "title": item.title,
-            "score": item_score,
-            "validated": final_answer
-        })
-
-    # Calculate percentage
-    percentage_score = (total_score / max_possible_score * 100) if max_possible_score > 0 else 0
-
-    # Determine risk band and label from centralized thresholds.
-    risk_band_enum = get_risk_band(percentage_score)
-    risk_band = risk_band_enum.value
-    risk_label = get_risk_label(risk_band_enum)
-
-    # Get top 3 strengths (highest scoring items)
-    strengths = sorted(validated_items, key=lambda x: x["score"], reverse=True)[:3]
-    
-    # Get bottom 3 gaps (lowest scoring items)
-    gaps = sorted(unvalidated_items, key=lambda x: x["score"])[:3]
-
-    # Get previous scoring result to calculate score change
-    previous_result_query = await db.execute(
-        select(ScoringResult).where(ScoringResult.session_id == session_id)
-    )
-    previous_result = previous_result_query.scalar_one_or_none()
-
-    # Calculate score change
-    score_change = None
-    if previous_result:
-        score_change = percentage_score - previous_result.total_score
-
-    # Delete existing scoring result (we'll create a new one)
-    if previous_result:
-        db.delete(previous_result)
-        await db.flush()  # Flush to ensure delete happens before insert
-
-    # Create new scoring result
-    scoring_result = ScoringResult(
-        session_id=session_id,
-        total_score=percentage_score,
-        risk_band=risk_band_enum,
-        category_scores=category_scores,
-        top_strengths=[s['title'] for s in strengths[:3]],
-        top_gaps=[g['title'] for g in gaps[:3]],
-        items_validated=len(validated_items),
-        items_total=len(responses)
-    )
-
-    db.add(scoring_result)
-    await db.flush()  # Flush to get scoring_result.id before creating history
-    await db.refresh(scoring_result)
-
-    # Create score history record
-    score_history_entry = ScoreHistory(
-        session_id=session_id,
-        scoring_result_id=scoring_result.id,
-        total_score=percentage_score,
-        risk_band=risk_band_enum,
-        items_validated=len(validated_items),
-        items_total=len(responses),
-        calculated_at=datetime.utcnow(),
-        score_change=score_change,
-        trigger_event="manual_calculation" if previous_result else "initial_calculation",
-        created_by_user_id=current_user.id
-    )
-
-    db.add(score_history_entry)
-    await db.commit()
-    await db.refresh(scoring_result)
-
-    # Update session status to scoring
-    session.status = SessionStatus.SCORING
-    await db.commit()
-
-    return {
-        "session_id": session_id,
-        "total_score": int(percentage_score),
-        "max_possible_score": 100,
-        "percentage": round(percentage_score, 1),
-        "risk_band": risk_band,
-        "risk_label": risk_label,
-        "category_breakdown": list(category_scores.values()),
-        "strengths": strengths,
-        "gaps": gaps,
-        "summary": {
-            "validated_items": len(validated_items),
-            "unvalidated_items": len(unvalidated_items),
-            "total_items": len(responses)
-        },
-        "scoring_result_id": scoring_result.id
-    }
 
 
 @router.get("/{session_id}/score")
