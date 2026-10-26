@@ -60,6 +60,15 @@ jobs:
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
+      # The Dockerfile's base image comes from public ECR, which rate-limits
+      # anonymous pulls per source IP and has failed builds with
+      # "429 toomanyrequests: Data limit exceeded". Authenticating with the
+      # credentials already configured above raises that quota substantially.
+      - name: Login to Amazon ECR Public
+        run: |
+          aws ecr-public get-login-password --region us-east-1 \
+            | docker login --username AWS --password-stdin public.ecr.aws
+
       - name: Build, tag, and push image
         id: build-image
         env:
