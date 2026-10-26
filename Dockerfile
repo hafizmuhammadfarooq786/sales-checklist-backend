@@ -1,4 +1,10 @@
-FROM public.ecr.aws/docker/library/python:3.11-slim
+# Docker Hub rather than public.ecr.aws: the ECR mirror's anonymous pull quota
+# is exhausted for GitHub's shared runner IPs and fails every build with
+# "Data limit exceeded". Both registries serve the identical image
+# (sha256:b7a9e5f6a93d6d4a31f129bbd4bdee69efccb6ded0fb230d78aafaf37af98377).
+# The durable fix is mirroring this image into the private ECR registry these
+# workflows already push to, which removes third-party quotas entirely.
+FROM python:3.11-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1

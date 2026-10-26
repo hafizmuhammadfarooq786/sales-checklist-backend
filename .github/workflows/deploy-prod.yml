@@ -60,25 +60,6 @@ jobs:
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      # The Dockerfile's base image comes from public ECR, which meters
-      # anonymous pulls per source IP; shared runners exhaust that quota and the
-      # pull fails with "429 toomanyrequests: Data limit exceeded". The limit is
-      # time-windowed, so pull the base image on its own with backoff before
-      # building. Authenticating would raise the quota instead, but the deploy
-      # user has no ecr-public:GetAuthorizationToken permission.
-      - name: Pre-pull base image (public ECR is rate limited)
-        run: |
-          for attempt in 1 2 3 4 5; do
-            if docker pull public.ecr.aws/docker/library/python:3.11-slim; then
-              echo "base image pulled on attempt $attempt"
-              exit 0
-            fi
-            echo "pull failed (attempt $attempt), retrying in $((attempt * 30))s"
-            sleep $((attempt * 30))
-          done
-          echo "base image still unavailable after 5 attempts"
-          exit 1
-
       - name: Build, tag, and push image
         id: build-image
         env:
