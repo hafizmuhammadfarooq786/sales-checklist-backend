@@ -980,6 +980,12 @@ class ReportService:
                     for k in d.keys():
                         if k not in headers:
                             headers.append(k)
+                # Nothing to tabulate: an empty list (note fields like
+                # "results": [] are saved empty), or dicts with no keys.
+                # ReportLab rejects a table with zero columns, which otherwise
+                # fails the whole PDF over a blank note field.
+                if not headers:
+                    return blocks
                 rows: List[List[Any]] = [[Paragraph(f"<b>{h}</b>", body) for h in headers]]
                 for d in data:
                     rows.append(
