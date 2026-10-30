@@ -1,10 +1,10 @@
 """
 Celery tasks for audio transcription pipeline.
 """
-import asyncio
 import logging
 
 from app.celery_app import celery_app
+from app.tasks._runner import run_task
 from app.services.transcription_pipeline import run_transcription_job
 
 logger = logging.getLogger(__name__)
@@ -17,5 +17,5 @@ def process_transcription_task(self, session_id: int, file_path: str) -> None:
     Retries are disabled; failures mark the session failed inside the pipeline.
     """
     logger.info("Celery: starting transcription for session %s", session_id)
-    asyncio.run(run_transcription_job(session_id, file_path))
+    run_task(run_transcription_job(session_id, file_path))
     logger.info("Celery: finished transcription for session %s", session_id)
