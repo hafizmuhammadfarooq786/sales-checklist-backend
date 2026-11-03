@@ -31,6 +31,17 @@ svglib==1.5.1
 
 # Celery for async tasks
 celery[redis]==5.4.0
+# Pinned because celery 5.4.0 accepts kombu >=5.3.4,<6.0, so a build picks up
+# whatever is newest. kombu 5.6 declares redis>=4.5.2 but its redis transport
+# raises VersionMismatch at runtime unless redis-py is >=6.1.0, so pip resolves
+# the install cleanly and the worker then dies on boot:
+#
+#   kombu.exceptions.VersionMismatch: Redis transport requires redis-py
+#   versions 6.1.0 or later. You have 5.2.0
+#
+# 5.5.4 is the last release whose metadata caps redis at <=5.2.1, which matches
+# the pin above. Raise both together, never one alone.
+kombu==5.5.4
 flower==2.0.1
 
 # HTTP Client
