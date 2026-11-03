@@ -1,15 +1,21 @@
-"""Managers share a session with other salespeople in the organization."""
+"""Managers share a session with other salespeople.
+
+Sharing stays inside the owning organization unless the two organizations are
+explicitly partnered, which is how national accounts are worked by several
+companies on one checklist.
+"""
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.api.dependencies import check_session_access, get_current_active_user
 from app.db.session import get_db
 from app.models.session import Session
+from app.models.organization_partner import OrganizationPartner
 from app.models.session_share import SessionShare
 from app.models.user import User, UserRole
 
@@ -36,6 +42,27 @@ class SessionShareCandidate(BaseModel):
 
 class SessionShareCreate(BaseModel):
     user_id: int
+
+
+async def _shareable_organization_ids(owner_org_id: int, db: AsyncSession) -> list[int]:
+    """The owning organization plus any it is actively partnered with.
+
+    Without a partner row this is just the owning organization, so behaviour is
+    unchanged for everyone who has not opted in.
+    """
+    result = await db.execute(
+        select(OrganizationPartner.a_id, OrganizationPartner.b_id).where(
+            OrganizationPartner.is_active.is_(True),
+            or_(
+                OrganizationPartner.a_id == owner_org_id,
+                OrganizationPartner.b_id == owner_org_id,
+            ),
+        )
+    )
+    org_ids = {owner_org_id}
+    for a_id, b_id in result.all():
+        org_ids.add(b_id if a_id == owner_org_id else a_id)
+    return sorted(org_ids)
 
 
 def _user_brief(user: User) -> dict:
@@ -116,10 +143,11 @@ async def list_share_candidates(
     )
     taken = {row[0] for row in already.all()}
     taken.add(session.user_id)
+    org_ids = await _shareable_organization_ids(session.user.organization_id, db)
     result = await db.execute(
         select(User)
         .where(
-            User.organization_id == session.user.organization_id,
+            User.organization_id.in_(org_ids),
             User.role == UserRole.REP,
             User.deleted_at.is_(None),
             User.is_active.is_(True),
@@ -151,10 +179,11 @@ async def add_session_share(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="The salesperson who created this checklist already has access",
         )
+    org_ids = await _shareable_organization_ids(session.user.organization_id, db)
     result = await db.execute(
         select(User).where(
             User.id == body.user_id,
-            User.organization_id == session.user.organization_id,
+            User.organization_id.in_(org_ids),
             User.role == UserRole.REP,
             User.deleted_at.is_(None),
             User.is_active.is_(True),
@@ -164,7 +193,7 @@ async def add_session_share(
     if salesperson is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Choose an active salesperson in this organization",
+            detail="Choose an active salesperson in this organization or a partner organization",
         )
     existing = await db.execute(
         select(SessionShare).where(
