@@ -1,0 +1,109 @@
+# Local development stack — committed reference copy.
+#
+# docker-compose.yml is gitignored so each developer can keep local tweaks, but
+# that meant every correction below lived on one machine only. Copy this file to
+# docker-compose.yml to start, and fold any fix worth keeping back into here.
+#
+#   cp docker-compose.example.yml docker-compose.yml
+#
+# Three corrections are baked in; each one silently broke the Celery worker:
+#
+#   1. `celery --app app.celery_app worker` — the old `celery worker --app
+#      app.tasks` was wrong twice over: Celery 5 removed that flag order, and
+#      app.tasks is the task package, not the Celery instance. Exit code 2 on
+#      every start.
+#   2. No `ports:` on the worker — it serves no HTTP. Publishing 8000 made
+#      Docker's proxy hold the port and shadow a backend running on the host,
+#      which failed as ERR_CONNECTION_RESET on localhost (IPv6 ::1 reaches the
+#      proxy first) while 127.0.0.1 still worked.
+#   3. DATABASE_URL uses the postgresql+asyncpg:// driver. Without +asyncpg
+#      SQLAlchemy raises InvalidRequestError on the async engine.
+#
+# The root Codebase/docker-compose.yml runs the full stack (api, frontend,
+# worker, flower) and needs the same `-A app.celery_app` module path.
+
+services:
+  db:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: sales_checklist
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./backups:/backups
+    ports:
+      - "5432:5432"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  celery_worker:
+    build: .
+    # No ports: a Celery worker serves no HTTP. Publishing 8000 made Docker's
+    # proxy hold the port and shadow a backend running on the host, which then
+    # failed with ERR_CONNECTION_RESET on localhost (IPv6 ::1 hits the proxy
+    # first) while 127.0.0.1 still worked.
+    env_file:
+      - .env
+    environment:
+      ENVIRONMENT: development
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@db:5432/sales_checklist
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+      USE_CELERY_FOR_EMAIL: "false"
+    volumes:
+      - .:/app
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    # `--app` must precede the subcommand (Celery 5 removed the old order), and
+    # the app lives in app/celery_app.py — `app.tasks` is the task package, not
+    # the Celery instance.
+    command: celery --app app.celery_app worker --loglevel INFO
+
+  # api:
+  #   build: .
+  #   ports:
+  #     - "8000:8000"
+  #   env_file:
+  #     - .env
+  #   environment:
+  #     ENVIRONMENT: development
+  #     DATABASE_URL: postgresql+asyncpg://postgres:postgres@db:5432/sales_checklist
+  #     REDIS_URL: redis://redis:6379/0
+  #     CELERY_BROKER_URL: redis://redis:6379/1
+  #     CELERY_RESULT_BACKEND: redis://redis:6379/2
+  #     USE_CELERY_FOR_EMAIL: "false"
+  #   volumes:
+  #     - .:/app
+  #   depends_on:
+  #     db:
+  #       condition: service_healthy
+  #     redis:
+  #       condition: service_healthy
+  #   command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+volumes:
+  postgres_data:
+
+networks:
+  default:
+    driver: bridge

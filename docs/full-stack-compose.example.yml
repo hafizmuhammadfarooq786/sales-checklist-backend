@@ -1,0 +1,158 @@
+# Full-stack local compose — reference copy, kept here because the original
+# lives in the parent Codebase/ folder which is not in any repository.
+#
+# Runs postgres, redis, backend, celery-worker, flower and frontend together.
+# The backend repo's own docker-compose.yml runs a smaller subset.
+#
+# Its build contexts and env_file paths are relative to Codebase/, so it only
+# runs from there — copy it up first rather than running it from docs/:
+#
+#   cp docs/full-stack-compose.example.yml ../docker-compose.yml
+#
+# Two corrections are baked in:
+#
+#   1. `celery -A app.celery_app` for both worker and flower. The original said
+#      app.services.celery_app, which does not exist — the worker died with
+#      ModuleNotFoundError while the stack still reported healthy.
+#   2. DATABASE_URL uses postgresql+asyncpg://. Without +asyncpg SQLAlchemy
+#      raises InvalidRequestError on the async engine.
+
+# Docker Compose for The Sales Checklist™ Development Environment
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: sales-checklist-db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: sales_checklist
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - sales-checklist-network
+
+  # Redis Cache & Celery Broker
+  redis:
+    image: redis:7-alpine
+    container_name: sales-checklist-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      - sales-checklist-network
+
+  # FastAPI Backend
+  backend:
+    build:
+      context: ./sales-checklist-backend
+      dockerfile: Dockerfile
+    container_name: sales-checklist-api
+    ports:
+      - "8000:8000"
+    env_file:
+      - ./sales-checklist-backend/.env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/sales_checklist
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+    volumes:
+      - ./sales-checklist-backend:/app
+      - /app/venv
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - sales-checklist-network
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+  # Celery Worker (for async tasks like audio transcription)
+  celery-worker:
+    build:
+      context: ./sales-checklist-backend
+      dockerfile: Dockerfile
+    container_name: sales-checklist-celery-worker
+    env_file:
+      - ./sales-checklist-backend/.env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/sales_checklist
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+    volumes:
+      - ./sales-checklist-backend:/app
+      - /app/venv
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - sales-checklist-network
+    command: celery -A app.celery_app worker --loglevel=info
+
+  # Flower (Celery Monitoring)
+  flower:
+    build:
+      context: ./sales-checklist-backend
+      dockerfile: Dockerfile
+    container_name: sales-checklist-flower
+    ports:
+      - "5555:5555"
+    env_file:
+      - ./sales-checklist-backend/.env
+    environment:
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+    depends_on:
+      - redis
+      - celery-worker
+    networks:
+      - sales-checklist-network
+    command: celery -A app.celery_app flower --port=5555
+
+  # Next.js Frontend
+  frontend:
+    build:
+      context: ./sales-checklist-frontend
+      dockerfile: Dockerfile.dev
+    container_name: sales-checklist-frontend
+    ports:
+      - "3000:3000"
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8000/api/v1
+    volumes:
+      - ./sales-checklist-frontend:/app
+      - /app/node_modules
+      - /app/.next
+    depends_on:
+      - backend
+    networks:
+      - sales-checklist-network
+    command: npm run dev
+
+networks:
+  sales-checklist-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:

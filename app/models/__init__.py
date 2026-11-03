@@ -16,6 +16,7 @@ from app.models.session import (
     SessionResponse,
 )
 from app.models.session_share import SessionShare
+from app.models.organization_partner import OrganizationPartner
 from app.models.scoring import ScoringResult, CoachingFeedback, RiskBand, ScoreHistory
 from app.models.report import Report, ReportFormat
 from app.models.invitation import Invitation
@@ -59,6 +60,7 @@ __all__ = [
     "Transcript",
     "SessionResponse",
     "SessionShare",
+    "OrganizationPartner",
     "ScoringResult",
     "ScoreHistory",
     "CoachingFeedback",
