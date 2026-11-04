@@ -107,10 +107,14 @@ async def get_score_history(
     # Verify session access with RBAC
     access_filter = get_session_access_filter(current_user)
     session_result = await db.execute(
-        select(Session).where(
+        select(Session)
+        .where(
             Session.id == session_id,
             access_filter
         )
+        # The owner is needed to tell whether a version was saved by
+        # someone from a partner organization.
+        .options(selectinload(Session.user))
     )
     session = session_result.scalar_one_or_none()
 
@@ -137,11 +141,42 @@ async def get_score_history(
             "message": "No score history found. Calculate a score first."
         }
 
+    # Resolve the authors in one query. A version may have been saved by a
+    # contributor from a partner organization, so the organization name is
+    # part of the answer to "who changed this".
+    author_ids = {
+        record.created_by_user_id
+        for record in history_records
+        if record.created_by_user_id is not None
+    }
+    authors: dict[int, dict] = {}
+    if author_ids:
+        authors_result = await db.execute(
+            select(User)
+            .where(User.id.in_(author_ids))
+            .options(selectinload(User.organization))
+        )
+        for user in authors_result.scalars().all():
+            full_name = f"{user.first_name or ''} {user.last_name or ''}".strip()
+            authors[user.id] = {
+                "user_id": user.id,
+                "name": full_name or user.email,
+                "email": user.email,
+                "organization_id": user.organization_id,
+                "organization_name": (
+                    user.organization.name if user.organization else None
+                ),
+            }
+
+    owner_org_id = session.user.organization_id if session.user else None
+
     # Format history records for response
     formatted_history = []
     for record in history_records:
+        author = authors.get(record.created_by_user_id)
         formatted_history.append({
             "id": record.id,
+            "version_number": record.version_number,
             "total_score": record.total_score,
             "risk_band": record.risk_band,
             "items_validated": record.items_validated,
@@ -149,7 +184,15 @@ async def get_score_history(
             "calculated_at": record.calculated_at.isoformat(),
             "score_change": record.score_change,
             "trigger_event": record.trigger_event,
-            "created_by_user_id": record.created_by_user_id
+            "created_by_user_id": record.created_by_user_id,
+            "created_by": author,
+            # Flags a version saved from outside the owning organization, so
+            # the UI can show it without comparing ids itself.
+            "created_by_partner": bool(
+                author
+                and owner_org_id is not None
+                and author["organization_id"] != owner_org_id
+            ),
         })
 
     # Calculate summary statistics

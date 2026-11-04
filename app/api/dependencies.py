@@ -246,9 +246,42 @@ def _native_session_access_filter(current_user: User):
         return Session.user_id == current_user.id
 
 
-def get_session_write_filter(current_user: User):
-    """Sessions this user may change. Read-only shares are not included."""
+def get_owned_session_filter(current_user: User):
+    """Sessions that belong to this user's own organization, role scoping applied.
+
+    Shares are excluded whatever their permission. Use this for anything that
+    counts or reports on "my" work — a checklist shared from a partner company
+    is someone else's pipeline, and folding it into these numbers would
+    overstate them on both sides.
+    """
     return _native_session_access_filter(current_user)
+
+
+def get_session_write_filter(current_user: User):
+    """Sessions this user may change.
+
+    A share grants write access only when its permission is "edit" — the
+    default is "read", so a share made before this existed, or one a manager
+    left as view-only, still cannot change anything.
+
+    This is how a partner organization contributes to a shared checklist: the
+    rows they touch are theirs to edit, and every change is recorded against
+    their name by the share.edit_applied activity event.
+    """
+    from app.models.session import Session
+    from app.models.session_share import SessionShare
+
+    native = _native_session_access_filter(current_user)
+    if current_user.role == UserRole.SYSTEM_ADMIN:
+        return native
+
+    editable = Session.id.in_(
+        select(SessionShare.session_id).where(
+            SessionShare.user_id == current_user.id,
+            SessionShare.permission == "edit",
+        )
+    )
+    return or_(native, editable)
 
 
 def get_session_access_filter(current_user: User):

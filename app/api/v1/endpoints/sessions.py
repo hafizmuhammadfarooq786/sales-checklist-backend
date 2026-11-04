@@ -1084,6 +1084,70 @@ async def get_checklist_item_intelligence_endpoint(
     return ChecklistItemIntelligenceResponse(**intelligence)
 
 
+async def _record_shared_edit(
+    db: AsyncSession,
+    *,
+    session_id: int,
+    actor: User,
+    payload: dict,
+) -> None:
+    """Record an edit made by someone who does not own the checklist.
+
+    Only fires for a share holder. An owner editing their own checklist is
+    ordinary work and would drown the trail; the point here is attributing a
+    change made by a contributor from another organization.
+
+    Name and email are copied in rather than referenced, because
+    activity_events.actor_user_id is ON DELETE SET NULL and this record has to
+    outlive the account.
+    """
+    from app.models.session_share import SessionShare
+    from app.services.activity_emitter import activity_emitter
+    from app.services.activity_event_types import SHARE_EDIT_APPLIED
+
+    share_row = await db.execute(
+        select(SessionShare).where(
+            SessionShare.session_id == session_id,
+            SessionShare.user_id == actor.id,
+        )
+    )
+    share = share_row.scalar_one_or_none()
+    if share is None:
+        return  # The owner, a manager or an admin — not a shared contributor.
+
+    owner_row = await db.execute(
+        select(Session).where(Session.id == session_id).options(
+            selectinload(Session.user)
+        )
+    )
+    session_obj = owner_row.scalar_one_or_none()
+    owner_org = (
+        session_obj.user.organization_id
+        if session_obj and session_obj.user
+        else None
+    )
+    name = f"{actor.first_name or ''} {actor.last_name or ''}".strip()
+
+    await activity_emitter.emit(
+        db,
+        event_type=SHARE_EDIT_APPLIED,
+        organization_id=owner_org,
+        actor_user_id=actor.id,
+        resource_type="session",
+        resource_id=session_id,
+        payload={
+            "actor_user_id": actor.id,
+            "actor_name": name or None,
+            "actor_email": actor.email,
+            "actor_organization_id": actor.organization_id,
+            "cross_organization": actor.organization_id != owner_org,
+            "share_permission": share.permission,
+            **payload,
+        },
+        commit=True,
+    )
+
+
 @router.put(
     "/{session_id}/checklist/{item_id}",
     response_model=ChecklistItemUpdateResponse
@@ -1174,6 +1238,22 @@ async def update_checklist_item(
         response.ai_answer,
         response.user_answer,
         response.score,
+    )
+
+    # A contributor from a partner organization editing someone else's
+    # checklist is the case this trail exists for, so record it by name and
+    # email rather than by id alone — the account may later be removed.
+    await _record_shared_edit(
+        db,
+        session_id=session_id,
+        actor=current_user,
+        payload={
+            "item_id": item_id,
+            "item_title": item.title,
+            "user_answer": response.user_answer,
+            "was_changed": response.was_changed,
+            "score": response.score,
+        },
     )
 
     return ChecklistItemUpdateResponse(

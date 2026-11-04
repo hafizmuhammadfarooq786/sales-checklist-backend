@@ -3,10 +3,12 @@ Organization API Endpoints - ADMIN level
 Handles organization settings, teams, invitations, and user management
 """
 import uuid
+from datetime import datetime
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query, UploadFile, File
 from fastapi.responses import Response
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, or_, func
 from sqlalchemy.orm import selectinload
@@ -14,6 +16,7 @@ from typing import List, Optional
 
 from app.db.session import get_db
 from app.models import Organization, User, Team, OrganizationSettings
+from app.models.organization_partner import OrganizationPartner, ordered_pair
 from app.models.user import UserRole
 from app.schemas.organization import (
     OrganizationResponse,
@@ -899,3 +902,215 @@ async def accept_invitation(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e)
         )
+
+
+# ---------------------------------------------------------------------------
+# Partner organizations
+#
+# A national account is worked by several companies at once, so a checklist has
+# to be shareable outside the organization that owns it. Sharing widens only to
+# organizations paired here — never to the whole system.
+# ---------------------------------------------------------------------------
+
+
+class PartnerOrganizationResponse(BaseModel):
+    id: int
+    organization_id: int
+    name: str
+    industry: Optional[str] = None
+    created_at: datetime
+
+
+class PartnerOrganizationCreate(BaseModel):
+    organization_id: int
+
+
+class PartnerCandidateResponse(BaseModel):
+    organization_id: int
+    name: str
+    industry: Optional[str] = None
+
+
+@router.get("/partners", response_model=List[PartnerOrganizationResponse])
+async def list_partner_organizations(
+    current_user: User = Depends(require_roles(UserRole.ADMIN)),
+    db: AsyncSession = Depends(get_db),
+):
+    """Organizations this one may share checklists with."""
+    org_id = current_user.organization_id
+    result = await db.execute(
+        select(OrganizationPartner).where(
+            OrganizationPartner.is_active.is_(True),
+            or_(
+                OrganizationPartner.a_id == org_id,
+                OrganizationPartner.b_id == org_id,
+            ),
+        )
+    )
+    links = list(result.scalars().all())
+    if not links:
+        return []
+
+    partner_ids = [
+        link.b_id if link.a_id == org_id else link.a_id for link in links
+    ]
+    orgs_result = await db.execute(
+        select(Organization).where(Organization.id.in_(partner_ids))
+    )
+    orgs = {org.id: org for org in orgs_result.scalars().all()}
+
+    out = []
+    for link in links:
+        partner_id = link.b_id if link.a_id == org_id else link.a_id
+        org = orgs.get(partner_id)
+        if org is None:
+            continue
+        out.append(
+            PartnerOrganizationResponse(
+                id=link.id,
+                organization_id=org.id,
+                name=org.name,
+                industry=org.industry,
+                created_at=link.created_at,
+            )
+        )
+    out.sort(key=lambda row: row.name.lower())
+    return out
+
+
+@router.get("/partners/candidates", response_model=List[PartnerCandidateResponse])
+async def list_partner_candidates(
+    search: Optional[str] = None,
+    current_user: User = Depends(require_roles(UserRole.ADMIN)),
+    db: AsyncSession = Depends(get_db),
+):
+    """Active organizations that are not this one and not already partnered."""
+    org_id = current_user.organization_id
+    existing = await db.execute(
+        select(OrganizationPartner.a_id, OrganizationPartner.b_id).where(
+            OrganizationPartner.is_active.is_(True),
+            or_(
+                OrganizationPartner.a_id == org_id,
+                OrganizationPartner.b_id == org_id,
+            ),
+        )
+    )
+    taken = {org_id}
+    for a_id, b_id in existing.all():
+        taken.add(b_id if a_id == org_id else a_id)
+
+    query = select(Organization).where(
+        Organization.id.notin_(list(taken)),
+        Organization.is_active.is_(True),
+    )
+    if search and search.strip():
+        query = query.where(Organization.name.ilike(f"%{search.strip()}%"))
+
+    result = await db.execute(query.order_by(Organization.name.asc()).limit(50))
+    return [
+        PartnerCandidateResponse(
+            organization_id=org.id, name=org.name, industry=org.industry
+        )
+        for org in result.scalars().all()
+    ]
+
+
+@router.post(
+    "/partners",
+    response_model=PartnerOrganizationResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def add_partner_organization(
+    body: PartnerOrganizationCreate,
+    current_user: User = Depends(require_roles(UserRole.ADMIN)),
+    db: AsyncSession = Depends(get_db),
+):
+    """Pair this organization with another so they can share checklists."""
+    org_id = current_user.organization_id
+    if body.organization_id == org_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="An organization cannot partner with itself",
+        )
+
+    partner_result = await db.execute(
+        select(Organization).where(
+            Organization.id == body.organization_id,
+            Organization.is_active.is_(True),
+        )
+    )
+    partner = partner_result.scalar_one_or_none()
+    if partner is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Organization not found",
+        )
+
+    a_id, b_id = ordered_pair(org_id, body.organization_id)
+    existing_result = await db.execute(
+        select(OrganizationPartner).where(
+            OrganizationPartner.a_id == a_id,
+            OrganizationPartner.b_id == b_id,
+        )
+    )
+    link = existing_result.scalar_one_or_none()
+    if link is not None:
+        if link.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"{partner.name} is already a partner",
+            )
+        # Re-pairing a previously removed partner reuses the row, so the pair
+        # stays unique.
+        link.is_active = True
+        link.created_by_user_id = current_user.id
+    else:
+        link = OrganizationPartner(
+            a_id=a_id,
+            b_id=b_id,
+            is_active=True,
+            created_by_user_id=current_user.id,
+        )
+        db.add(link)
+
+    await db.commit()
+    await db.refresh(link)
+    return PartnerOrganizationResponse(
+        id=link.id,
+        organization_id=partner.id,
+        name=partner.name,
+        industry=partner.industry,
+        created_at=link.created_at,
+    )
+
+
+@router.delete("/partners/{partner_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def remove_partner_organization(
+    partner_id: int,
+    current_user: User = Depends(require_roles(UserRole.ADMIN)),
+    db: AsyncSession = Depends(get_db),
+):
+    """End a partnership.
+
+    Deactivated rather than deleted, so existing shares keep an auditable
+    reason for having been created.
+    """
+    org_id = current_user.organization_id
+    result = await db.execute(
+        select(OrganizationPartner).where(
+            OrganizationPartner.id == partner_id,
+            or_(
+                OrganizationPartner.a_id == org_id,
+                OrganizationPartner.b_id == org_id,
+            ),
+        )
+    )
+    link = result.scalar_one_or_none()
+    if link is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Partner organization not found",
+        )
+    link.is_active = False
+    await db.commit()
+    return None
