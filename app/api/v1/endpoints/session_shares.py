@@ -18,10 +18,14 @@ from app.models.session import Session
 from app.models.organization_partner import OrganizationPartner
 from app.models.session_share import SessionShare
 from app.models.user import User, UserRole
+from app.services.activity_emitter import activity_emitter
+from app.services.activity_event_types import SHARE_GRANTED, SHARE_REVOKED
 
 router = APIRouter()
 
 READ_PERMISSION = "read"
+EDIT_PERMISSION = "edit"
+PERMISSIONS = (READ_PERMISSION, EDIT_PERMISSION)
 
 
 class SessionShareUser(BaseModel):
@@ -42,6 +46,9 @@ class SessionShareCandidate(BaseModel):
 
 class SessionShareCreate(BaseModel):
     user_id: int
+    # Defaults to read so a share is never accidentally editable; the manager
+    # opts in to "edit".
+    permission: str = READ_PERMISSION
 
 
 async def _shareable_organization_ids(owner_org_id: int, db: AsyncSession) -> list[int]:
@@ -63,6 +70,22 @@ async def _shareable_organization_ids(owner_org_id: int, db: AsyncSession) -> li
     for a_id, b_id in result.all():
         org_ids.add(b_id if a_id == owner_org_id else a_id)
     return sorted(org_ids)
+
+
+def _actor(user: User) -> dict:
+    """Who did this, captured by value.
+
+    activity_events.actor_user_id is ON DELETE SET NULL, so the name and email
+    are copied into the payload: a cross-company audit trail has to survive the
+    account being removed.
+    """
+    name = f"{user.first_name or ''} {user.last_name or ''}".strip()
+    return {
+        "actor_user_id": user.id,
+        "actor_name": name or None,
+        "actor_email": user.email,
+        "actor_organization_id": user.organization_id,
+    }
 
 
 def _user_brief(user: User) -> dict:
@@ -174,6 +197,12 @@ async def add_session_share(
     db: AsyncSession = Depends(get_db),
 ):
     session = await _require_manager_session(session_id, current_user, db)
+    permission = (body.permission or READ_PERMISSION).strip().lower()
+    if permission not in PERMISSIONS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='Permission must be "read" or "edit"',
+        )
     if body.user_id == session.user_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -209,12 +238,33 @@ async def add_session_share(
     share = SessionShare(
         session_id=session_id,
         user_id=salesperson.id,
-        permission=READ_PERMISSION,
+        permission=permission,
         added_by_user_id=current_user.id,
     )
     db.add(share)
     await db.commit()
     await db.refresh(share)
+
+    await activity_emitter.emit(
+        db,
+        event_type=SHARE_GRANTED,
+        organization_id=session.user.organization_id,
+        actor_user_id=current_user.id,
+        resource_type="session",
+        resource_id=session_id,
+        payload={
+            **_actor(current_user),
+            "share_id": share.id,
+            "permission": share.permission,
+            "shared_with_user_id": salesperson.id,
+            "shared_with_email": salesperson.email,
+            "shared_with_organization_id": salesperson.organization_id,
+            "cross_organization": salesperson.organization_id
+            != session.user.organization_id,
+        },
+        commit=True,
+    )
+
     return SessionShareUser(
         id=share.id,
         user_id=salesperson.id,
@@ -233,7 +283,7 @@ async def remove_session_share(
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
 ):
-    await _require_manager_session(session_id, current_user, db)
+    session = await _require_manager_session(session_id, current_user, db)
     result = await db.execute(
         select(SessionShare).where(
             SessionShare.session_id == session_id,
@@ -246,5 +296,17 @@ async def remove_session_share(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="This salesperson is not on the checklist",
         )
+    revoked = {"share_id": share.id, "permission": share.permission}
     await db.delete(share)
     await db.commit()
+
+    await activity_emitter.emit(
+        db,
+        event_type=SHARE_REVOKED,
+        organization_id=session.user.organization_id,
+        actor_user_id=current_user.id,
+        resource_type="session",
+        resource_id=session_id,
+        payload={**_actor(current_user), **revoked, "removed_user_id": user_id},
+        commit=True,
+    )

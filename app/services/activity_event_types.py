@@ -23,3 +23,9 @@ SESSION_FAILED = "session.failed"
 
 # Admin
 ADMIN_AUTH_SESSION_REVOKED = "admin.auth_session.revoked"
+
+# Shared checklists — a contributor from a partner organization is editing
+# someone else's checklist, so every change is attributable.
+SHARE_GRANTED = "share.granted"
+SHARE_REVOKED = "share.revoked"
+SHARE_EDIT_APPLIED = "share.edit_applied"
