@@ -209,6 +209,43 @@ class S3Service:
             logger.error(f"Failed to generate presigned URL: {e}")
             return None
 
+    def object_url(self, s3_key: str) -> str:
+        """The URL form stored in AudioFile.file_path (same as upload_file returns)."""
+        return f"https://{self.bucket_name}.s3.{settings.AWS_REGION}.amazonaws.com/{s3_key}"
+
+    def generate_presigned_upload(
+        self,
+        s3_key: str,
+        content_type: str,
+        max_bytes: int,
+        expiration: int = 600,
+    ) -> dict:
+        """
+        A signed form that lets a browser upload one object straight to S3.
+
+        The signature covers the key, the content type and a size range, so
+        the holder can upload only that object, of that type, up to max_bytes.
+        S3 itself rejects anything else. Returns {"url": ..., "fields": {...}}.
+        """
+        return self.s3_client.generate_presigned_post(
+            Bucket=self.bucket_name,
+            Key=s3_key,
+            Fields={"Content-Type": content_type},
+            Conditions=[
+                {"Content-Type": content_type},
+                ["content-length-range", 1, max_bytes],
+            ],
+            ExpiresIn=expiration,
+        )
+
+    def object_info(self, s3_key: str) -> Optional[dict]:
+        """Size and content type of an object, or None if it does not exist."""
+        try:
+            head = self.s3_client.head_object(Bucket=self.bucket_name, Key=s3_key)
+        except ClientError:
+            return None
+        return {"size": head["ContentLength"], "content_type": head.get("ContentType")}
+
     def get_object_bytes(self, s3_key: str) -> bytes:
         """
         Download an object from S3 and return its bytes.

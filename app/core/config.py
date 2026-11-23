@@ -92,6 +92,10 @@ class Settings(BaseSettings):
     LAMBDA_WORKER_MODE: bool = Field(default=False)
     # Where app.log is written. Lambda's disk is read-only outside /tmp.
     LOG_DIR: str = Field(default="logs")
+    # Staging only: the browser uploads session audio straight to S3 with a
+    # signed form, because a Lambda request cannot carry more than 6 MB.
+    # Off (the default, and production): audio is uploaded through the API.
+    DIRECT_UPLOADS_ENABLED: bool = Field(default=False)
 
     # CORS
     ALLOWED_ORIGINS: List[str] = Field(
