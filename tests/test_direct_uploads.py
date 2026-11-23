@@ -121,3 +121,137 @@ def test_signature_fixes_key_type_and_size(monkeypatch):
     assert service.object_url("audio/7/128/a.webm") == (
         f"https://stage-audio.s3.{settings.AWS_REGION}.amazonaws.com/audio/7/128/a.webm"
     )
+
+
+# ---------------------------------------------------------------------------
+# Voice notes and knowledge documents (app/api/v1/endpoints/direct_uploads.py)
+# ---------------------------------------------------------------------------
+
+from types import SimpleNamespace
+
+from app.api.dependencies import get_current_user
+from app.api.v1.endpoints import direct_uploads
+from app.models.user import UserRole
+
+AUDIO = {"filename": "note.webm", "content_type": "audio/webm", "file_size": 10}
+PDF = {"filename": "guide.pdf", "content_type": "application/pdf", "file_size": 10}
+
+
+def _client_as(role, organization_id=3):
+    user = SimpleNamespace(id=7, role=role, organization_id=organization_id, team_id=None)
+    app = FastAPI()
+    app.include_router(direct_uploads.notes_router, prefix="/sessions")
+    app.include_router(direct_uploads.knowledge_router, prefix="/organization/knowledge-base")
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[direct_uploads.require_admin] = lambda: user
+
+    async def no_db():
+        yield _NoDatabase()
+
+    app.dependency_overrides[get_db] = no_db
+    return TestClient(app)
+
+
+def test_new_routes_are_404_when_the_setting_is_off():
+    client = _client_as(UserRole.ADMIN)
+    calls = [
+        ("/sessions/128/notes/audio/upload-url", AUDIO),
+        ("/sessions/128/notes/audio/upload-complete", {"key": "manager_notes/7/128/a.webm"}),
+        ("/organization/knowledge-base/documents/upload-url", PDF),
+        ("/organization/knowledge-base/documents/upload-complete",
+         {"key": "knowledge-base/3/a.pdf", "filename": "a.pdf"}),
+    ]
+    for path, body in calls:
+        response = client.post(path, json=body)
+        assert response.status_code == 404, path
+        assert response.json()["detail"]["error"] == "DIRECT_UPLOADS_DISABLED", path
+
+
+def test_a_rep_cannot_get_a_voice_note_form(monkeypatch):
+    monkeypatch.setattr(settings, "DIRECT_UPLOADS_ENABLED", True)
+    client = _client_as(UserRole.REP)
+    assert client.post("/sessions/128/notes/audio/upload-url", json=AUDIO).status_code == 403
+    done = client.post(
+        "/sessions/128/notes/audio/upload-complete", json={"key": "manager_notes/7/128/a.webm"}
+    )
+    assert done.status_code == 403
+
+
+def test_voice_note_type_and_size_are_checked_before_signing(monkeypatch):
+    monkeypatch.setattr(settings, "DIRECT_UPLOADS_ENABLED", True)
+    client = _client_as(UserRole.MANAGER)
+    not_audio = client.post(
+        "/sessions/128/notes/audio/upload-url", json={**AUDIO, "content_type": "application/pdf"}
+    )
+    too_big = client.post(
+        "/sessions/128/notes/audio/upload-url",
+        json={**AUDIO, "file_size": direct_uploads.VOICE_NOTE_MAX_BYTES + 1},
+    )
+    assert not_audio.status_code == 400
+    assert too_big.status_code == 400 and "10MB" in too_big.json()["detail"]
+
+
+def test_voice_note_key_outside_the_managers_folder_is_refused(monkeypatch):
+    monkeypatch.setattr(settings, "DIRECT_UPLOADS_ENABLED", True)
+    client = _client_as(UserRole.MANAGER)
+    for key in (
+        "manager_notes/8/128/a.webm",     # another manager
+        "manager_notes/7/129/a.webm",     # another session
+        "manager_notes/7/128/../a.webm",  # traversal
+        "audio/7/128/a.webm",             # a session recording, not a note
+    ):
+        response = client.post("/sessions/128/notes/audio/upload-complete", json={"key": key})
+        assert response.status_code == 400, key
+        assert response.json()["detail"]["error"] == "INVALID_UPLOAD_KEY", key
+
+
+def test_knowledge_type_and_size_are_checked_before_signing(monkeypatch):
+    monkeypatch.setattr(settings, "DIRECT_UPLOADS_ENABLED", True)
+    client = _client_as(UserRole.ADMIN)
+    path = "/organization/knowledge-base/documents/upload-url"
+    wrong_type = client.post(path, json={**PDF, "content_type": "application/zip"})
+    too_big = client.post(
+        path, json={**PDF, "file_size": settings.KNOWLEDGE_BASE_MAX_FILE_BYTES + 1}
+    )
+    assert wrong_type.status_code == 400 and "Supported types" in wrong_type.json()["detail"]
+    assert too_big.status_code == 400 and "maximum allowed size" in too_big.json()["detail"]
+
+
+def test_knowledge_key_outside_the_organizations_folder_is_refused(monkeypatch):
+    monkeypatch.setattr(settings, "DIRECT_UPLOADS_ENABLED", True)
+    client = _client_as(UserRole.ADMIN, organization_id=3)
+    for key in (
+        "knowledge-base/4/a.pdf",       # another organization
+        "knowledge-base/30/a.pdf",      # 3 must not match 30
+        "knowledge-base/3/x/a.pdf",     # nested
+        "knowledge-base/3/../4/a.pdf",  # traversal
+    ):
+        response = client.post(
+            "/organization/knowledge-base/documents/upload-complete",
+            json={"key": key, "filename": "a.pdf"},
+        )
+        assert response.status_code == 400, key
+        assert response.json()["detail"]["error"] == "INVALID_UPLOAD_KEY", key
+
+
+def test_knowledge_form_is_signed_for_the_normalised_type(monkeypatch):
+    """The browser may send 'application/pdf; charset=binary'. S3 must hold the
+    clean type, because indexing later picks its reader from it."""
+    monkeypatch.setattr(settings, "DIRECT_UPLOADS_ENABLED", True)
+    signed = {}
+
+    class FakeS3:
+        def generate_presigned_upload(self, key, content_type, max_bytes, expiration):
+            signed.update(key=key, content_type=content_type, max_bytes=max_bytes)
+            return {"url": "https://s3.example/", "fields": {"key": key}}
+
+    monkeypatch.setattr(direct_uploads, "get_s3_service", lambda: FakeS3())
+    response = _client_as(UserRole.ADMIN, organization_id=3).post(
+        "/organization/knowledge-base/documents/upload-url",
+        json={**PDF, "content_type": "application/pdf; charset=binary"},
+    )
+    assert response.status_code == 200
+    assert signed["content_type"] == "application/pdf"
+    assert signed["max_bytes"] == settings.KNOWLEDGE_BASE_MAX_FILE_BYTES
+    assert direct_uploads.key_is_directly_under(response.json()["key"], "knowledge-base/3/")
+    assert response.json()["key"].endswith(".pdf")

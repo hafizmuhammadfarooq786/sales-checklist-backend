@@ -24,6 +24,7 @@ from app.api.v1.endpoints import (
     public_registration,
     knowledge_base,
     app_help,
+    direct_uploads,
 )
 api_router = APIRouter()
 
@@ -82,3 +83,11 @@ async def api_root():
             "health": "/health"
         }
     }
+# Direct uploads to S3 for voice notes and knowledge documents. Both routers
+# answer 404 unless DIRECT_UPLOADS_ENABLED is on (staging only).
+api_router.include_router(direct_uploads.notes_router, prefix="/sessions", tags=["Uploads"])
+api_router.include_router(
+    direct_uploads.knowledge_router,
+    prefix="/organization/knowledge-base",
+    tags=["Uploads"],
+)

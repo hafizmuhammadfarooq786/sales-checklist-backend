@@ -386,7 +386,7 @@ class DirectUploadComplete(BaseModel):
     key: str
 
 
-def _require_direct_uploads() -> None:
+def require_direct_uploads() -> None:
     if not settings.DIRECT_UPLOADS_ENABLED:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -394,21 +394,25 @@ def _require_direct_uploads() -> None:
         )
 
 
+def key_is_directly_under(key: str, prefix: str) -> bool:
+    """
+    True only for a file sitting directly in the folder `prefix`: nothing
+    nested, no traversal. The browser sends the key back at the second step,
+    so it cannot be trusted as it arrives.
+    """
+    if not key.startswith(prefix):
+        return False
+    name = key[len(prefix):]
+    return bool(name) and "/" not in name and ".." not in name
+
+
 def audio_key_prefix(user_id: int, session_id: int) -> str:
     return f"audio/{user_id}/{session_id}/"
 
 
 def owns_audio_key(key: str, user_id: int, session_id: int) -> bool:
-    """
-    True only for a key this user could have been given for this session:
-    directly inside their own session folder, nothing nested, no traversal.
-    The client sends the key back, so it cannot be trusted as it arrives.
-    """
-    prefix = audio_key_prefix(user_id, session_id)
-    if not key.startswith(prefix):
-        return False
-    name = key[len(prefix):]
-    return bool(name) and "/" not in name and ".." not in name
+    """A key this user could have been given for this session, and no other."""
+    return key_is_directly_under(key, audio_key_prefix(user_id, session_id))
 
 
 def _too_large(file_size: int) -> HTTPException:
@@ -453,7 +457,7 @@ async def create_audio_upload_url(
     db: AsyncSession = Depends(get_db),
 ):
     """Step 1 of a direct upload: a signed form for one audio file."""
-    _require_direct_uploads()
+    require_direct_uploads()
 
     if body.content_type not in DIRECT_UPLOAD_AUDIO_TYPES:
         raise HTTPException(
@@ -505,7 +509,7 @@ async def complete_audio_upload(
     db: AsyncSession = Depends(get_db),
 ):
     """Step 2 of a direct upload: record the file and start transcription."""
-    _require_direct_uploads()
+    require_direct_uploads()
 
     if not owns_audio_key(body.key, user_id, session_id):
         raise HTTPException(

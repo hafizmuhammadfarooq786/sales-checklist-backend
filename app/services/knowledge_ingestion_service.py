@@ -154,6 +154,41 @@ async def store_knowledge_file(
         return document
 
 
+async def record_uploaded_knowledge_file(
+    *,
+    organization_id: int,
+    uploaded_by_user_id: int,
+    original_filename: str,
+    content_type: str,
+    file_size_bytes: int,
+    s3_key: str,
+) -> OrganizationKnowledgeDocument:
+    """
+    The same record store_knowledge_file makes, for a file the browser has
+    already put in S3 itself (direct upload, staging on Lambda).
+    """
+    s3_url = get_s3_service().object_url(s3_key)
+    async with get_db_session() as db:
+        org_settings = await _get_org_settings(db, organization_id)
+        if org_settings.knowledge_base_status == KnowledgeBaseStatus.NOT_STARTED:
+            org_settings.knowledge_base_status = KnowledgeBaseStatus.PROCESSING
+
+        document = OrganizationKnowledgeDocument(
+            organization_id=organization_id,
+            uploaded_by_user_id=uploaded_by_user_id,
+            original_filename=original_filename,
+            content_type=content_type,
+            file_size_bytes=file_size_bytes,
+            s3_key=s3_key,
+            s3_url=s3_url,
+            status=KnowledgeDocumentStatus.QUEUED,
+        )
+        db.add(document)
+        await db.commit()
+        await db.refresh(document)
+        return document
+
+
 async def delete_knowledge_document(db: AsyncSession, document: OrganizationKnowledgeDocument) -> None:
     if not document.s3_key.startswith("uploads/"):
         try:
