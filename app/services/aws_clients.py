@@ -13,3 +13,12 @@ def s3_client():
         kwargs["aws_access_key_id"] = settings.AWS_ACCESS_KEY_ID
         kwargs["aws_secret_access_key"] = settings.AWS_SECRET_ACCESS_KEY
     return boto3.client("s3", **kwargs)
+
+
+def lambda_client():
+    """Lambda client, same credential rule as s3_client()."""
+    kwargs: dict = {"region_name": settings.AWS_REGION}
+    if settings.AWS_ACCESS_KEY_ID and settings.AWS_SECRET_ACCESS_KEY:
+        kwargs["aws_access_key_id"] = settings.AWS_ACCESS_KEY_ID
+        kwargs["aws_secret_access_key"] = settings.AWS_SECRET_ACCESS_KEY
+    return boto3.client("lambda", **kwargs)

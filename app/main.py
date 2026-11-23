@@ -20,7 +20,7 @@ from app.middleware.trace import TraceIdMiddleware
 def setup_logging():
     """Setup application logging with file and console handlers"""
     # Create logs directory if it doesn't exist
-    log_dir = "logs"
+    log_dir = settings.LOG_DIR
     if not os.path.exists(log_dir):
         os.makedirs(log_dir)
 
@@ -124,6 +124,13 @@ app.add_middleware(TraceIdMiddleware)
 
 # API router
 app.include_router(api_router, prefix=settings.API_V1_STR)
+
+# Background jobs on Lambda: only the worker function exposes this, and that
+# function has no public address (see app/api/lambda_worker.py).
+if settings.LAMBDA_WORKER_MODE:
+    from app.api.lambda_worker import router as lambda_worker_router
+
+    app.include_router(lambda_worker_router)
 
 
 @app.get("/health")

@@ -84,6 +84,15 @@ class Settings(BaseSettings):
     # When True, transactional email is enqueued on the Celery worker (stage/prod).
     USE_CELERY_FOR_EMAIL: str = Field(default="auto")
 
+    # AWS Lambda (staging). Both are off on ECS, where Celery does this work.
+    # Name of the Lambda function that runs background jobs. When set, jobs are
+    # handed to it instead of Celery or FastAPI BackgroundTasks.
+    LAMBDA_WORKER_FUNCTION: str = Field(default="")
+    # True only on that worker function: exposes POST /events, which runs a job.
+    LAMBDA_WORKER_MODE: bool = Field(default=False)
+    # Where app.log is written. Lambda's disk is read-only outside /tmp.
+    LOG_DIR: str = Field(default="logs")
+
     # CORS
     ALLOWED_ORIGINS: List[str] = Field(
         default=["http://localhost:3000"]

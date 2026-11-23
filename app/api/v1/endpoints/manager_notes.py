@@ -26,6 +26,7 @@ from app.api.dependencies import (
     get_current_user,
     manager_can_view_owned_session,
 )
+from app.services.background_jobs import run_after_response
 from app.services.email_dispatch import dispatch_manager_note_email
 
 router = APIRouter()
@@ -150,7 +151,7 @@ async def _notify_rep_of_manager_note(
         )
 
 
-def _schedule_rep_manager_note_notification(
+async def _schedule_rep_manager_note_notification(
     background_tasks: BackgroundTasks,
     *,
     session: Session,
@@ -167,7 +168,8 @@ def _schedule_rep_manager_note_notification(
         )
         return
 
-    background_tasks.add_task(
+    await run_after_response(
+        background_tasks,
         _notify_rep_of_manager_note,
         rep=rep,
         manager=manager,
@@ -236,7 +238,7 @@ async def create_manager_note(
 
     logger.info(f"Manager {current_user.id} ({current_user.email}) added note to session {session_id}")
 
-    _schedule_rep_manager_note_notification(
+    await _schedule_rep_manager_note_notification(
         background_tasks,
         session=session,
         manager=current_user,
@@ -410,7 +412,7 @@ async def create_audio_manager_note(
 
         logger.info(f"Manager {current_user.id} ({current_user.email}) added audio note to session {session_id}")
 
-        _schedule_rep_manager_note_notification(
+        await _schedule_rep_manager_note_notification(
             background_tasks,
             session=session,
             manager=current_user,

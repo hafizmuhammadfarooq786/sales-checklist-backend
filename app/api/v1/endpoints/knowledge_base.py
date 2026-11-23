@@ -38,6 +38,8 @@ from app.services.knowledge_text_extractor import (
 )
 from app.services.knowledge_session_intelligence_service import generate_selling_tool
 
+from app.services.background_jobs import lambda_worker_enabled, send_to_lambda_worker
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
@@ -47,6 +49,9 @@ def _enqueue_document_processing(
     background_tasks: BackgroundTasks,
     document_id: int,
 ) -> None:
+    if lambda_worker_enabled():
+        send_to_lambda_worker("knowledge_base.process_document", document_id=document_id)
+        return
     if settings.USE_CELERY_FOR_KNOWLEDGE_BASE:
         try:
             from app.tasks.knowledge_base import process_knowledge_document_task

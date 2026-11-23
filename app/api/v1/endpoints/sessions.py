@@ -71,6 +71,7 @@ from app.schemas.knowledge_base import (
 from app.models.checklist import ChecklistItem
 from app.models.session import SessionResponse as SessionResponseModel
 from app.core.config import settings
+from app.services.background_jobs import lambda_worker_enabled, send_to_lambda_worker
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -81,6 +82,13 @@ def _enqueue_session_intelligence(
     session_id: int,
     organization_id: int,
 ) -> None:
+    if lambda_worker_enabled():
+        send_to_lambda_worker(
+            "knowledge_base.analyze_session",
+            session_id=session_id,
+            organization_id=organization_id,
+        )
+        return
     if settings.USE_CELERY_FOR_KNOWLEDGE_BASE:
         try:
             from app.tasks.knowledge_base import analyze_session_intelligence_task
@@ -1439,12 +1447,20 @@ async def submit_manual_checklist(
     logger.info(f"Session {session_id} scoring complete: {total_score} points, {risk_band.value} band (Version {next_version} created)")
 
     # Generate coaching feedback in background (without transcript)
-    background_tasks.add_task(
-        generate_coaching_in_background,
-        session_id,
-        total_score,
-        risk_band
-    )
+    if lambda_worker_enabled():
+        send_to_lambda_worker(
+            "coaching.generate",
+            session_id=session_id,
+            total_score=total_score,
+            risk_band=risk_band.value,
+        )
+    else:
+        background_tasks.add_task(
+            generate_coaching_in_background,
+            session_id,
+            total_score,
+            risk_band
+        )
     if current_user.organization_id:
         _enqueue_session_intelligence(
             background_tasks,
