@@ -256,3 +256,33 @@ jobs:
             sleep 15
           done
           exit 1
+
+      # Staging also runs on AWS Lambda, from the same image plus an adapter.
+      # These two steps run after the ECS deploy above has succeeded.
+      - name: Build and push the Lambda image
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          # --provenance=false: with an attestation attached the push is an
+          # image index, and Lambda refuses an index.
+          docker build --platform linux/amd64 --provenance=false --sbom=false \
+            --build-arg APP_IMAGE="$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" \
+            --build-arg ADAPTER_IMAGE="$ECR_REGISTRY/$ECR_REPOSITORY:lambda-adapter-1.1.0" \
+            -t "$ECR_REGISTRY/$ECR_REPOSITORY:lambda-$IMAGE_TAG" \
+            .github/lambda
+          docker push "$ECR_REGISTRY/$ECR_REPOSITORY:lambda-$IMAGE_TAG"
+
+      - name: Update the Lambda functions
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          for fn in sales-checklist-stage-backend sales-checklist-stage-worker; do
+            aws lambda update-function-code --function-name "$fn" \
+              --image-uri "$ECR_REGISTRY/$ECR_REPOSITORY:lambda-$IMAGE_TAG" \
+              --query LastUpdateStatus --output text
+            aws lambda wait function-updated-v2 --function-name "$fn"
+          done
