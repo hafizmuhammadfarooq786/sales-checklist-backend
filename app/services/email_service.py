@@ -47,10 +47,9 @@ class EmailService:
     def _build_ses_client():
         """Create SES client using explicit keys or the default AWS credential chain."""
         try:
-            kwargs: Dict[str, Any] = {"region_name": settings.SES_REGION}
-            if settings.AWS_ACCESS_KEY_ID and settings.AWS_SECRET_ACCESS_KEY:
-                kwargs["aws_access_key_id"] = settings.AWS_ACCESS_KEY_ID
-                kwargs["aws_secret_access_key"] = settings.AWS_SECRET_ACCESS_KEY
+            from app.services.aws_clients import credential_kwargs
+
+            kwargs: Dict[str, Any] = {"region_name": settings.SES_REGION, **credential_kwargs()}
             client = boto3.client("ses", **kwargs)
             logger.info("SES client initialized for region: %s", settings.SES_REGION)
             return client
